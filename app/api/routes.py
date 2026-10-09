@@ -1,15 +1,15 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.models import Material, Obra, Requisicao, StatusRequisicao
+from app.models import Material, Obra, Requisicao, StatusObra, StatusRequisicao
 from app.schemas import (
     MaterialCreate, MaterialOut,
     ObraCreate, ObraOut,
-    RequisicaoCreate, RequisicaoOut,
+    AndamentoUpdate, RequisicaoCreate, RequisicaoOut,
     ResumoOut, Unidade, UNIDADES_DESCRICAO,
 )
 from app.services.fila_service import fila_global
@@ -65,7 +65,68 @@ async def listar_materiais(db: AsyncSession = Depends(get_db)):
     return result.scalars().all()
 
 
+async def _remover(db: AsyncSession, entidade, coluna_req, forcar: bool):
+    """Remove material/obra. Com histórico de requisições só remove com forcar=true;
+    requisições ainda na fila/processando sempre bloqueiam a remoção."""
+    abertas = (await db.execute(
+        select(func.count()).select_from(Requisicao).where(
+            coluna_req == entidade.id,
+            Requisicao.status.in_([StatusRequisicao.PENDENTE, StatusRequisicao.EM_PROCESSAMENTO]),
+        )
+    )).scalar_one()
+    if abertas:
+        raise HTTPException(409, f"Há {abertas} requisição(ões) pendente(s)/em processamento. Aguarde o processamento.")
+    historico = (await db.execute(
+        select(func.count()).select_from(Requisicao).where(coluna_req == entidade.id)
+    )).scalar_one()
+    if historico and not forcar:
+        raise HTTPException(409, f"Há {historico} requisição(ões) no histórico vinculadas. Confirme para remover tudo junto.")
+    if historico:
+        await db.execute(delete(Requisicao).where(coluna_req == entidade.id))
+    await db.delete(entidade)
+    await db.commit()
+
+
+@router.delete("/materiais/{material_id}", status_code=204)
+async def remover_material(material_id: int, forcar: bool = False, db: AsyncSession = Depends(get_db)):
+    material = await db.get(Material, material_id)
+    if material is None:
+        raise HTTPException(404, "Material não encontrado")
+    await _remover(db, material, Requisicao.material_id, forcar)
+
+
 # ---------- Obras ----------
+
+@router.delete("/obras/{obra_id}", status_code=204)
+async def remover_obra(obra_id: int, forcar: bool = False, db: AsyncSession = Depends(get_db)):
+    obra = await db.get(Obra, obra_id)
+    if obra is None:
+        raise HTTPException(404, "Obra não encontrada")
+    await _remover(db, obra, Requisicao.obra_id, forcar)
+
+
+@router.patch("/obras/{obra_id}/andamento", response_model=ObraOut)
+async def atualizar_andamento(obra_id: int, payload: AndamentoUpdate, db: AsyncSession = Depends(get_db)):
+    """Atualiza progresso (0-100) e descrição. progresso=100 ou finalizada=true encerra a obra;
+    diminuir o progresso de uma obra finalizada a reabre."""
+    obra = await db.get(Obra, obra_id)
+    if obra is None:
+        raise HTTPException(404, "Obra não encontrada")
+    finalizar = payload.finalizada or payload.progresso == 100
+    obra.descricao_andamento = payload.descricao_andamento
+    if finalizar:
+        obra.progresso = 100
+        obra.parada_por_falta_material = False
+        if obra.status != StatusObra.FINALIZADA.value:
+            obra.status = StatusObra.FINALIZADA.value
+            obra.finalizada_em = datetime.now(timezone.utc).replace(tzinfo=None)
+    else:
+        obra.progresso = payload.progresso
+        obra.status = StatusObra.EM_ANDAMENTO.value
+        obra.finalizada_em = None
+    await db.commit()
+    await db.refresh(obra)
+    return obra
 
 @router.post("/obras", response_model=ObraOut)
 async def criar_obra(payload: ObraCreate, db: AsyncSession = Depends(get_db)):
@@ -94,6 +155,8 @@ async def criar_requisicao(payload: RequisicaoCreate, db: AsyncSession = Depends
     obra = await db.get(Obra, payload.obra_id)
     if obra is None:
         raise HTTPException(404, "Obra não encontrada")
+    if obra.status == StatusObra.FINALIZADA.value:
+        raise HTTPException(409, "Obra finalizada não aceita novas requisições")
     material = await db.get(Material, payload.material_id)
     if material is None:
         raise HTTPException(404, "Material não encontrado")

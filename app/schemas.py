@@ -72,6 +72,16 @@ class ObraOut(BaseModel):
     prazo_entrega: datetime | None
     parada_por_falta_material: bool
     nivel_prioridade: int
+    status: str
+    progresso: int
+    descricao_andamento: str | None
+    finalizada_em: datetime | None
+
+
+class AndamentoUpdate(BaseModel):
+    progresso: int = Field(ge=0, le=100)
+    descricao_andamento: str | None = Field(default=None, max_length=1000)
+    finalizada: bool = False
 
 
 class RequisicaoCreate(BaseModel):

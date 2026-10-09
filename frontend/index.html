@@ -44,6 +44,13 @@
   .bar{height:8px;background:var(--neubg);border-radius:4px;min-width:90px;overflow:hidden}
   .bar i{display:block;height:100%;background:var(--ok)} .bar.crit i{background:var(--err)}
   .empty{color:var(--mut);padding:8px 0}
+  button.sm{padding:3px 8px;font-size:12px;background:var(--neubg);color:var(--tx)}
+  button.sm.del{background:var(--errbg);color:var(--err)}
+  .s-em_andamento{background:var(--infobg);color:var(--info)} .s-finalizada{background:var(--okbg);color:var(--ok)}
+  .desc{max-width:220px;white-space:normal;color:var(--mut);font-size:12px}
+  dialog{border:1px solid var(--bd);border-radius:10px;background:var(--card);color:var(--tx);width:min(420px,92vw)}
+  dialog::backdrop{background:#0006}
+  dialog form{grid-template-columns:1fr} dialog textarea{font:inherit;padding:7px 8px;border:1px solid var(--bd);border-radius:6px;background:var(--bg);color:var(--tx);min-height:70px}
   #toasts{position:fixed;right:12px;bottom:12px;display:grid;gap:8px;z-index:9}
   .toast{padding:9px 14px;border-radius:8px;background:var(--card);border:1px solid var(--bd);border-left:4px solid var(--pri);box-shadow:0 2px 8px #0003}
   .toast.err{border-left-color:var(--err)} .toast.ok{border-left-color:var(--ok)}
@@ -98,6 +105,15 @@
     <div class="tw"><table id="tReq"></table></div>
   </section>
 </main>
+<dialog id="dlg">
+  <form id="fAnd" method="dialog">
+    <h2 id="dlgTitulo">Andamento</h2>
+    <label>Progresso: <b id="progVal">0</b>%<input name="progresso" type="range" min="0" max="100" step="5"></label>
+    <label>Descrição do andamento<textarea name="descricao_andamento" maxlength="1000" placeholder="Ex.: Cabeamento do 2º pavimento concluído"></textarea></label>
+    <label class="chk"><input name="finalizada" type="checkbox"> Marcar obra como finalizada</label>
+    <div style="display:flex;gap:8px"><button type="submit" style="flex:1">Salvar</button><button type="button" class="sm" id="dlgCancel">Cancelar</button></div>
+  </form>
+</dialog>
 <div id="toasts"></div>
 
 <script>
@@ -125,26 +141,34 @@ const matDe = id => materiais.find(m => m.id === id);
 
 function renderCards(r) {
   const c = [['Total', r.total_requisicoes], ['Na fila', r.fila_pendente],
-    ...Object.entries(STATUS).map(([k, v]) => [v, r.por_status[k] ?? 0]), ['Materiais críticos', r.materiais_criticos]];
+    ...Object.entries(STATUS).map(([k, v]) => [v, r.por_status[k] ?? 0]), ['Materiais críticos', r.materiais_criticos], ['Obras finalizadas', obras.filter(o => o.status === 'finalizada').length + '/' + obras.length]];
   $('#cards').innerHTML = c.map(([l, n]) => `<div class="stat"><b>${n}</b><span>${l}</span></div>`).join('');
 }
 function renderMat() {
-  $('#tMat').innerHTML = materiais.length ? `<tr><th>Material</th><th>Estoque</th><th>Nível</th></tr>` + materiais.map(m => {
+  $('#tMat').innerHTML = materiais.length ? `<tr><th>Material</th><th>Estoque</th><th>Nível</th><th></th></tr>` + materiais.map(m => {
     const max = Math.max(m.quantidade_estoque, m.estoque_critico * 3, 1), crit = m.quantidade_estoque <= m.estoque_critico;
     return `<tr><td>${esc(m.nome)}</td><td>${fmt(m.quantidade_estoque)} ${esc(m.unidade)}</td>
-      <td><div class="bar ${crit ? 'crit' : ''}" title="${crit ? 'Abaixo do crítico' : 'OK'}"><i style="width:${m.quantidade_estoque / max * 100}%"></i></div></td></tr>`;
+      <td><div class="bar ${crit ? 'crit' : ''}" title="${crit ? 'Abaixo do crítico' : 'OK'}"><i style="width:${m.quantidade_estoque / max * 100}%"></i></div></td>
+      <td><button class="sm del" onclick="remover('materiais',${m.id},'${esc(m.nome).replace(/'/g, "\'")}')">Remover</button></td></tr>`;
   }).join('') : '<tr><td class="empty">Nenhum material.</td></tr>';
   const keep = [$('#selMat').value];
   $('#selMat').innerHTML = materiais.map(m => `<option value="${m.id}">${esc(m.nome)} (${fmt(m.quantidade_estoque)} ${esc(m.unidade)})</option>`).join('');
   if (keep[0]) $('#selMat').value = keep[0];
 }
 function renderObras() {
-  $('#tObra').innerHTML = obras.length ? `<tr><th>Obra</th><th>Cidade</th><th>Prio.</th><th>Prazo</th><th>Parada</th></tr>` + obras.map(o =>
-    `<tr><td>${esc(o.nome)}</td><td>${esc(o.cidade)}</td><td>${o.nivel_prioridade}</td>
+  $('#tObra').innerHTML = obras.length ? `<tr><th>Obra</th><th>Cidade</th><th>Status</th><th>Andamento</th><th>Prio.</th><th>Prazo</th><th>Parada</th><th></th></tr>` + obras.map(o =>
+    `<tr><td>${esc(o.nome)}</td><td>${esc(o.cidade)}</td>
+     <td><span class="badge s-${o.status}">${o.status === 'finalizada' ? 'Finalizada' : 'Em andamento'}</span>
+       ${o.finalizada_em ? `<div class="desc">${new Date(o.finalizada_em + 'Z').toLocaleDateString('pt-BR')}</div>` : ''}</td>
+     <td><div class="bar" title="${o.progresso}%"><i style="width:${o.progresso}%"></i></div>${o.progresso}%
+       ${o.descricao_andamento ? `<div class="desc">${esc(o.descricao_andamento)}</div>` : ''}</td>
+     <td>${o.nivel_prioridade}</td>
      <td>${o.prazo_entrega ? new Date(o.prazo_entrega + 'Z').toLocaleString('pt-BR') : '—'}</td>
-     <td>${o.parada_por_falta_material ? '⚠️ sim' : 'não'}</td></tr>`).join('') : '<tr><td class="empty">Nenhuma obra.</td></tr>';
+     <td>${o.parada_por_falta_material ? '⚠️ sim' : 'não'}</td>
+     <td><button class="sm" onclick="abrirAndamento(${o.id})">Andamento</button>
+         <button class="sm del" onclick="remover('obras',${o.id},'${esc(o.nome).replace(/'/g, "\'")}')">Remover</button></td></tr>`).join('') : '<tr><td class="empty">Nenhuma obra.</td></tr>';
   const keep = $('#selObra').value;
-  $('#selObra').innerHTML = obras.map(o => `<option value="${o.id}">${esc(o.nome)} — ${esc(o.cidade)}</option>`).join('');
+  $('#selObra').innerHTML = obras.filter(o => o.status !== 'finalizada').map(o => `<option value="${o.id}">${esc(o.nome)} — ${esc(o.cidade)}</option>`).join('');
   if (keep) $('#selObra').value = keep;
 }
 function renderReqs() {
@@ -156,6 +180,37 @@ function renderReqs() {
       <td>${new Date(r.criado_em + 'Z').toLocaleTimeString('pt-BR')}</td></tr>`; }).join('')
     : '<tr><td class="empty">Nenhuma requisição.</td></tr>';
 }
+async function remover(tipo, id, nome) {
+  if (!confirm(`Remover "${nome}"?`)) return;
+  try {
+    try { await api(`/${tipo}/${id}`, {method: 'DELETE'}); }
+    catch (e) {
+      if (!/histórico/.test(e.message) || !confirm(e.message)) throw e;
+      await api(`/${tipo}/${id}?forcar=true`, {method: 'DELETE'});
+    }
+    toast('Removido', 'ok'); atualizar();
+  } catch (e) { toast(e.message, 'err'); }
+}
+let obraAnd = null;
+function abrirAndamento(id) {
+  const o = obras.find(x => x.id === id), f = $('#fAnd'); obraAnd = id;
+  $('#dlgTitulo').textContent = 'Andamento — ' + o.nome;
+  f.progresso.value = o.progresso; $('#progVal').textContent = o.progresso;
+  f.descricao_andamento.value = o.descricao_andamento ?? ''; f.finalizada.checked = o.status === 'finalizada';
+  $('#dlg').showModal();
+}
+$('#fAnd').progresso.addEventListener('input', e => $('#progVal').textContent = e.target.value);
+$('#fAnd').finalizada.addEventListener('change', e => { if (e.target.checked) { $('#fAnd').progresso.value = 100; $('#progVal').textContent = 100; } });
+$('#dlgCancel').onclick = () => $('#dlg').close();
+$('#fAnd').addEventListener('submit', async e => {
+  const f = e.target;
+  try {
+    await api(`/obras/${obraAnd}/andamento`, {method: 'PATCH', body: JSON.stringify({
+      progresso: Number(f.progresso.value), descricao_andamento: f.descricao_andamento.value || null, finalizada: f.finalizada.checked})});
+    toast('Andamento atualizado', 'ok'); atualizar();
+  } catch (err) { toast(err.message, 'err'); }
+});
+
 function notificarMudancas() {
   for (const r of reqs) {
     const antes = ultimoStatus[r.id];

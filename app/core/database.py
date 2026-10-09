@@ -35,3 +35,12 @@ async def init_models():
     """Cria as tabelas no banco (uso em dev/demo; em produção use Alembic)."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        if engine.dialect.name == "postgresql":
+            # create_all não altera tabelas existentes: adiciona as colunas novas de "obras"
+            for ddl in (
+                "ALTER TABLE obras ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'em_andamento'",
+                "ALTER TABLE obras ADD COLUMN IF NOT EXISTS progresso INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE obras ADD COLUMN IF NOT EXISTS descricao_andamento TEXT",
+                "ALTER TABLE obras ADD COLUMN IF NOT EXISTS finalizada_em TIMESTAMP",
+            ):
+                await conn.exec_driver_sql(ddl)
