@@ -42,5 +42,6 @@ async def init_models():
                 "ALTER TABLE obras ADD COLUMN IF NOT EXISTS progresso INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE obras ADD COLUMN IF NOT EXISTS descricao_andamento TEXT",
                 "ALTER TABLE obras ADD COLUMN IF NOT EXISTS finalizada_em TIMESTAMP",
+                "ALTER TABLE requisicoes ADD COLUMN IF NOT EXISTS pedido_id VARCHAR(36)",
             ):
                 await conn.exec_driver_sql(ddl)

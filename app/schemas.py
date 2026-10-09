@@ -90,11 +90,30 @@ class RequisicaoCreate(BaseModel):
     quantidade_solicitada: float = Field(gt=0)
 
 
+class ItemPedido(BaseModel):
+    material_id: int
+    quantidade_solicitada: float = Field(gt=0)
+
+
+class PedidoCreate(BaseModel):
+    obra_id: int
+    itens: list[ItemPedido] = Field(min_length=1, max_length=50)
+
+    @field_validator("itens")
+    @classmethod
+    def _sem_materiais_repetidos(cls, v):
+        ids = [i.material_id for i in v]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Material repetido no pedido; some as quantidades num único item")
+        return v
+
+
 class RequisicaoOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
     obra_id: int
     material_id: int
+    pedido_id: str | None = None
     quantidade_solicitada: float
     quantidade_atendida: float
     status: StatusRequisicao

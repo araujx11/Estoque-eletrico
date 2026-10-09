@@ -18,9 +18,22 @@
   .conn{font-size:12px;padding:3px 10px;border-radius:99px;background:var(--neubg);color:var(--neu)}
   .conn.on{background:var(--okbg);color:var(--ok)} .conn.off{background:var(--errbg);color:var(--err)}
   main{max-width:1200px;margin:0 auto;padding:16px;display:grid;gap:16px}
-  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
-  .stat{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:10px 12px}
-  .stat b{display:block;font-size:24px} .stat span{color:var(--mut);font-size:12px}
+  .dash{display:grid;gap:12px}
+  .cards{display:grid;gap:12px}
+  .cards.kpi{grid-template-columns:repeat(4,1fr)} .cards.st{grid-template-columns:repeat(6,1fr)}
+  @media (max-width:900px){.cards.kpi{grid-template-columns:repeat(2,1fr)} .cards.st{grid-template-columns:repeat(3,1fr)}}
+  @media (max-width:480px){.cards.st{grid-template-columns:repeat(2,1fr)}}
+  .stat{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:2px;border-top:3px solid var(--bd)}
+  .stat span{color:var(--mut);font-size:12px;text-transform:uppercase;letter-spacing:.04em;order:-1}
+  .stat b{font-size:26px;line-height:1.2;font-variant-numeric:tabular-nums}
+  .cards.kpi .stat{border-top-color:var(--pri)}
+  .stat.pendente{border-top-color:var(--neu)} .stat.em_processamento{border-top-color:var(--info)} .stat.aprovada{border-top-color:var(--ok)}
+  .stat.parcial{border-top-color:var(--warn)} .stat.negada,.stat.erro{border-top-color:var(--err)}
+  .item{display:grid;grid-template-columns:2fr 1fr auto;gap:8px;align-items:end;margin-bottom:8px}
+  .item .q{display:flex;align-items:center;gap:6px} .item .q input{flex:1}
+  .item .un{min-width:34px;font-weight:600} .item .hint{grid-column:1/-1;font-size:12px;color:var(--mut);margin-top:-4px}
+  .pedido{font-family:ui-monospace,monospace;font-size:12px;color:var(--mut)}
+  @media (max-width:600px){.item{grid-template-columns:1fr auto}.item .q{grid-column:1/2}}
   .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px}
   section{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px;min-width:0}
   h2{font-size:15px;margin:0 0 10px}
@@ -63,7 +76,7 @@
   <a href="/docs" style="color:var(--pri);font-size:13px">API docs</a>
 </header>
 <main>
-  <div class="cards" id="cards"></div>
+  <div class="dash"><div class="cards kpi" id="cardsKpi"></div><div class="cards st" id="cardsSt"></div></div>
 
   <div class="grid2">
     <section>
@@ -95,11 +108,13 @@
 
   <section>
     <h2>Nova requisição</h2>
-    <form id="fReq" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));align-items:end">
+    <form id="fReq" style="grid-template-columns:1fr">
       <label>Obra<select name="obra_id" id="selObra" required></select></label>
-      <label>Material<select name="material_id" id="selMat" required></select></label>
-      <label>Quantidade<input name="quantidade_solicitada" type="number" min="0.001" step="any" required></label>
-      <button>Enviar para a fila</button>
+      <div id="itens"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button type="button" class="sm" id="addItem">+ Adicionar material</button>
+        <button type="submit" style="margin-left:auto">Enviar pedido para a fila</button>
+      </div>
     </form>
     <h2>Requisições <small style="color:var(--mut);font-weight:400">(atualiza sozinho a cada 2s)</small></h2>
     <div class="tw"><table id="tReq"></table></div>
@@ -140,9 +155,11 @@ const nomeObra = id => obras.find(o => o.id === id)?.nome ?? '#' + id;
 const matDe = id => materiais.find(m => m.id === id);
 
 function renderCards(r) {
-  const c = [['Total', r.total_requisicoes], ['Na fila', r.fila_pendente],
-    ...Object.entries(STATUS).map(([k, v]) => [v, r.por_status[k] ?? 0]), ['Materiais críticos', r.materiais_criticos], ['Obras finalizadas', obras.filter(o => o.status === 'finalizada').length + '/' + obras.length]];
-  $('#cards').innerHTML = c.map(([l, n]) => `<div class="stat"><b>${n}</b><span>${l}</span></div>`).join('');
+  const fin = obras.filter(o => o.status === 'finalizada').length;
+  const card = (l, n, cls = '') => `<div class="stat ${cls}"><span>${l}</span><b>${n}</b></div>`;
+  $('#cardsKpi').innerHTML = card('Total de requisições', r.total_requisicoes) + card('Na fila', r.fila_pendente)
+    + card('Materiais críticos', r.materiais_criticos) + card('Obras finalizadas', `${fin}/${obras.length}`);
+  $('#cardsSt').innerHTML = Object.entries(STATUS).map(([k, v]) => card(v, r.por_status[k] ?? 0, k)).join('');
 }
 function renderMat() {
   $('#tMat').innerHTML = materiais.length ? `<tr><th>Material</th><th>Estoque</th><th>Nível</th><th></th></tr>` + materiais.map(m => {
@@ -151,9 +168,7 @@ function renderMat() {
       <td><div class="bar ${crit ? 'crit' : ''}" title="${crit ? 'Abaixo do crítico' : 'OK'}"><i style="width:${m.quantidade_estoque / max * 100}%"></i></div></td>
       <td><button class="sm del" onclick="remover('materiais',${m.id},'${esc(m.nome).replace(/'/g, "\'")}')">Remover</button></td></tr>`;
   }).join('') : '<tr><td class="empty">Nenhum material.</td></tr>';
-  const keep = [$('#selMat').value];
-  $('#selMat').innerHTML = materiais.map(m => `<option value="${m.id}">${esc(m.nome)} (${fmt(m.quantidade_estoque)} ${esc(m.unidade)})</option>`).join('');
-  if (keep[0]) $('#selMat').value = keep[0];
+  syncItens();
 }
 function renderObras() {
   $('#tObra').innerHTML = obras.length ? `<tr><th>Obra</th><th>Cidade</th><th>Status</th><th>Andamento</th><th>Prio.</th><th>Prazo</th><th>Parada</th><th></th></tr>` + obras.map(o =>
@@ -172,9 +187,9 @@ function renderObras() {
   if (keep) $('#selObra').value = keep;
 }
 function renderReqs() {
-  $('#tReq').innerHTML = reqs.length ? `<tr><th>Status</th><th>Obra</th><th>Material</th><th>Solicitado</th><th>Atendido</th><th>Worker</th><th>Criado</th></tr>` +
+  $('#tReq').innerHTML = reqs.length ? `<tr><th>Status</th><th>Pedido</th><th>Obra</th><th>Material</th><th>Solicitado</th><th>Atendido</th><th>Worker</th><th>Criado</th></tr>` +
     reqs.slice(0, 50).map(r => { const m = matDe(r.material_id), u = m?.unidade ?? '';
-      return `<tr><td><span class="badge s-${r.status}">${STATUS[r.status]}</span></td><td>${esc(nomeObra(r.obra_id))}</td>
+      return `<tr><td><span class="badge s-${r.status}">${STATUS[r.status]}</span></td><td class="pedido">${r.pedido_id ? '#' + r.pedido_id.slice(0, 6) : '—'}</td><td>${esc(nomeObra(r.obra_id))}</td>
       <td>${esc(m?.nome ?? '#' + r.material_id)}</td><td>${fmt(r.quantidade_solicitada)} ${esc(u)}</td>
       <td>${fmt(r.quantidade_atendida)} ${esc(u)}</td><td>${esc(r.worker_id ?? '—')}</td>
       <td>${new Date(r.criado_em + 'Z').toLocaleTimeString('pt-BR')}</td></tr>`; }).join('')
@@ -196,17 +211,17 @@ function abrirAndamento(id) {
   const o = obras.find(x => x.id === id), f = $('#fAnd'); obraAnd = id;
   $('#dlgTitulo').textContent = 'Andamento — ' + o.nome;
   f.progresso.value = o.progresso; $('#progVal').textContent = o.progresso;
-  f.descricao_andamento.value = o.descricao_andamento ?? ''; f.finalizada.checked = o.status === 'finalizada';
+  f.descricao_andamento.value = o.descricao_andamento ?? ''; f.finalizada.checked = o.status === 'finalizada'; f.descricao_andamento.disabled = f.finalizada.checked;
   $('#dlg').showModal();
 }
 $('#fAnd').progresso.addEventListener('input', e => $('#progVal').textContent = e.target.value);
-$('#fAnd').finalizada.addEventListener('change', e => { if (e.target.checked) { $('#fAnd').progresso.value = 100; $('#progVal').textContent = 100; } });
+$('#fAnd').finalizada.addEventListener('change', e => { $('#fAnd').descricao_andamento.disabled = e.target.checked; if (e.target.checked) { $('#fAnd').progresso.value = 100; $('#progVal').textContent = 100; } });
 $('#dlgCancel').onclick = () => $('#dlg').close();
 $('#fAnd').addEventListener('submit', async e => {
   const f = e.target;
   try {
     await api(`/obras/${obraAnd}/andamento`, {method: 'PATCH', body: JSON.stringify({
-      progresso: Number(f.progresso.value), descricao_andamento: f.descricao_andamento.value || null, finalizada: f.finalizada.checked})});
+      progresso: Number(f.progresso.value), descricao_andamento: f.finalizada.checked ? null : (f.descricao_andamento.value || null), finalizada: f.finalizada.checked})});
     toast('Andamento atualizado', 'ok'); atualizar();
   } catch (err) { toast(err.message, 'err'); }
 });
@@ -253,7 +268,45 @@ function enviar(form, path, after) {
 }
 enviar($('#fMat'), '/materiais', f => f.reset());
 enviar($('#fObra'), '/obras', f => f.reset());
-enviar($('#fReq'), '/requisicoes', f => f.elements.quantidade_solicitada.value = '');
+// ---- pedido com vários materiais ----
+// cada linha: material (select) + quantidade, já com a unidade do material e o limite do estoque
+function novoItem() {
+  const d = document.createElement('div'); d.className = 'item';
+  d.innerHTML = `<label>Material<select class="mat" required></select></label>
+    <label>Quantidade<span class="q"><input class="qtd" type="number" min="0.001" step="any" required><span class="un"></span></span></label>
+    <button type="button" class="sm del rm" title="Remover item">✕</button><div class="hint"></div>`;
+  d.querySelector('.mat').addEventListener('change', () => syncItens());
+  d.querySelector('.rm').onclick = () => { d.remove(); syncItens(); };
+  $('#itens').append(d); syncItens();
+}
+function syncItens() {
+  const linhas = [...document.querySelectorAll('#itens .item')];
+  const usados = linhas.map(l => l.querySelector('.mat').value);
+  linhas.forEach(l => {
+    const sel = l.querySelector('.mat'), atual = sel.value;
+    // não oferece material já escolhido em outra linha
+    const livres = materiais.filter(m => String(m.id) === atual || !usados.includes(String(m.id)));
+    sel.innerHTML = livres.map(m => `<option value="${m.id}">${esc(m.nome)}</option>`).join('');
+    if (atual && livres.some(m => String(m.id) === atual)) sel.value = atual;
+    const m = matDe(Number(sel.value));
+    l.querySelector('.un').textContent = m?.unidade ?? '';
+    const q = l.querySelector('.qtd'); if (m) q.max = m.quantidade_estoque;
+    l.querySelector('.hint').textContent = m ? `Disponível: ${fmt(m.quantidade_estoque)} ${m.unidade} — a retirada é feita em ${m.unidade}` : '';
+    l.querySelector('.rm').style.visibility = linhas.length > 1 ? 'visible' : 'hidden';
+  });
+}
+$('#addItem').onclick = novoItem;
+$('#fReq').addEventListener('submit', async e => {
+  e.preventDefault();
+  const itens = [...document.querySelectorAll('#itens .item')].map(l => ({
+    material_id: Number(l.querySelector('.mat').value), quantidade_solicitada: Number(l.querySelector('.qtd').value)}));
+  try {
+    await api('/pedidos', {method: 'POST', body: JSON.stringify({obra_id: Number($('#selObra').value), itens})});
+    toast(`Pedido com ${itens.length} item(ns) enviado`, 'ok');
+    $('#itens').innerHTML = ''; novoItem(); atualizar();
+  } catch (err) { toast(err.message, 'err'); }
+});
+novoItem();
 
 (async () => {
   try { $('#selUnidade').innerHTML = (await api('/unidades')).map(u => `<option value="${esc(u.valor)}" title="${esc(u.descricao)}">${esc(u.valor)} — ${esc(u.descricao)}</option>`).join(''); } catch {}

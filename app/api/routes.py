@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,7 +10,7 @@ from app.models import Material, Obra, Requisicao, StatusObra, StatusRequisicao
 from app.schemas import (
     MaterialCreate, MaterialOut,
     ObraCreate, ObraOut,
-    AndamentoUpdate, RequisicaoCreate, RequisicaoOut,
+    AndamentoUpdate, PedidoCreate, RequisicaoCreate, RequisicaoOut,
     ResumoOut, Unidade, UNIDADES_DESCRICAO,
 )
 from app.services.fila_service import fila_global
@@ -113,14 +114,15 @@ async def atualizar_andamento(obra_id: int, payload: AndamentoUpdate, db: AsyncS
     if obra is None:
         raise HTTPException(404, "Obra não encontrada")
     finalizar = payload.finalizada or payload.progresso == 100
-    obra.descricao_andamento = payload.descricao_andamento
     if finalizar:
+        obra.descricao_andamento = None  # obra concluída: o comentário de andamento perde o sentido
         obra.progresso = 100
         obra.parada_por_falta_material = False
         if obra.status != StatusObra.FINALIZADA.value:
             obra.status = StatusObra.FINALIZADA.value
             obra.finalizada_em = datetime.now(timezone.utc).replace(tzinfo=None)
     else:
+        obra.descricao_andamento = payload.descricao_andamento
         obra.progresso = payload.progresso
         obra.status = StatusObra.EM_ANDAMENTO.value
         obra.finalizada_em = None
@@ -178,6 +180,38 @@ async def criar_requisicao(payload: RequisicaoCreate, db: AsyncSession = Depends
         criado_em=requisicao.criado_em or datetime.now(timezone.utc),
     )
     return requisicao
+
+
+@router.post("/pedidos", response_model=list[RequisicaoOut], status_code=202)
+async def criar_pedido(payload: PedidoCreate, db: AsyncSession = Depends(get_db)):
+    """Uma requisição com vários materiais: gera 1 Requisicao por item, todas com o mesmo pedido_id."""
+    obra = await db.get(Obra, payload.obra_id)
+    if obra is None:
+        raise HTTPException(404, "Obra não encontrada")
+    if obra.status == StatusObra.FINALIZADA.value:
+        raise HTTPException(409, "Obra finalizada não aceita novas requisições")
+    for item in payload.itens:
+        if await db.get(Material, item.material_id) is None:
+            raise HTTPException(404, f"Material {item.material_id} não encontrado")
+
+    pedido_id = str(uuid.uuid4())
+    requisicoes = [
+        Requisicao(obra_id=obra.id, material_id=i.material_id,
+                   quantidade_solicitada=i.quantidade_solicitada, pedido_id=pedido_id)
+        for i in payload.itens
+    ]
+    db.add_all(requisicoes)
+    await db.commit()
+    for r in requisicoes:
+        await db.refresh(r)
+        await fila_global.adicionar(
+            requisicao_id=r.id,
+            parada_por_falta_material=obra.parada_por_falta_material,
+            nivel_prioridade=obra.nivel_prioridade,
+            prazo_entrega=obra.prazo_entrega,
+            criado_em=r.criado_em or datetime.now(timezone.utc),
+        )
+    return requisicoes
 
 
 @router.get("/requisicoes/{requisicao_id}", response_model=RequisicaoOut)
