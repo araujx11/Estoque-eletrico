@@ -67,6 +67,9 @@ class Requisicao(Base):
     obra_id: Mapped[int] = mapped_column(ForeignKey("obras.id"))
     material_id: Mapped[int] = mapped_column(ForeignKey("materiais.id"))
 
+    # agrupa os itens enviados juntos num mesmo pedido (None = requisição avulsa)
+    pedido_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+
     quantidade_solicitada: Mapped[float] = mapped_column(Float)
     quantidade_atendida: Mapped[float] = mapped_column(Float, default=0)
 
