@@ -13,7 +13,7 @@ COMMIT ou ROLLBACK. Isso serializa o acesso ao mesmo material sem
 serializar o sistema inteiro (materiais diferentes continuam sendo
 processados em paralelo, sem se bloquear).
 """
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -61,7 +61,7 @@ async def processar_requisicao(db: AsyncSession, requisicao_id: str, worker_id: 
             requisicao.quantidade_atendida = disponivel
             requisicao.status = StatusRequisicao.PARCIAL
 
-        requisicao.processado_em = datetime.utcnow()
+        requisicao.processado_em = datetime.now(timezone.utc).replace(tzinfo=None)
         # commit acontece ao sair do `async with db.begin()`, liberando o lock
 
     await db.refresh(requisicao)

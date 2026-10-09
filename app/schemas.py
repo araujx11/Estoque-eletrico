@@ -1,13 +1,42 @@
-from datetime import datetime
-from pydantic import BaseModel, ConfigDict
+import enum
+from datetime import datetime, timezone
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
 from app.models import StatusRequisicao
 
 
+class Unidade(str, enum.Enum):
+    """Unidades de medida predefinidas (valor gravado = sigla)."""
+    METRO = "m"
+    UNIDADE = "un"
+    CAIXA = "cx"
+    ROLO = "rolo"
+    BARRA = "barra"
+    PECA = "pç"
+    PAR = "par"
+    KG = "kg"
+    LITRO = "L"
+
+
+UNIDADES_DESCRICAO = {
+    Unidade.METRO: "Metro (cabos, fios)",
+    Unidade.UNIDADE: "Unidade (disjuntores, tomadas)",
+    Unidade.CAIXA: "Caixa",
+    Unidade.ROLO: "Rolo (fita, cabo)",
+    Unidade.BARRA: "Barra (eletroduto, perfilado)",
+    Unidade.PECA: "Peça",
+    Unidade.PAR: "Par",
+    Unidade.KG: "Quilograma",
+    Unidade.LITRO: "Litro",
+}
+
+
 class MaterialCreate(BaseModel):
-    nome: str
-    unidade: str
-    quantidade_estoque: float
-    estoque_critico: float = 0
+    nome: str = Field(min_length=1, max_length=120)
+    unidade: Unidade = Unidade.UNIDADE
+    quantidade_estoque: float = Field(ge=0)
+    estoque_critico: float = Field(default=0, ge=0)
 
 
 class MaterialOut(BaseModel):
@@ -20,11 +49,19 @@ class MaterialOut(BaseModel):
 
 
 class ObraCreate(BaseModel):
-    nome: str
-    cidade: str
+    nome: str = Field(min_length=1, max_length=120)
+    cidade: str = Field(min_length=1, max_length=80)
     prazo_entrega: datetime | None = None
     parada_por_falta_material: bool = False
-    nivel_prioridade: int = 5
+    nivel_prioridade: int = Field(default=5, ge=1, le=5)
+
+    @field_validator("prazo_entrega")
+    @classmethod
+    def _prazo_naive_utc(cls, v: datetime | None):
+        # a coluna é DateTime sem fuso; asyncpg rejeita datetime com tzinfo
+        if v is not None and v.tzinfo is not None:
+            v = v.astimezone(timezone.utc).replace(tzinfo=None)
+        return v
 
 
 class ObraOut(BaseModel):
@@ -40,7 +77,7 @@ class ObraOut(BaseModel):
 class RequisicaoCreate(BaseModel):
     obra_id: int
     material_id: int
-    quantidade_solicitada: float
+    quantidade_solicitada: float = Field(gt=0)
 
 
 class RequisicaoOut(BaseModel):
@@ -54,3 +91,10 @@ class RequisicaoOut(BaseModel):
     criado_em: datetime
     processado_em: datetime | None
     worker_id: str | None
+
+
+class ResumoOut(BaseModel):
+    total_requisicoes: int
+    por_status: dict[str, int]
+    materiais_criticos: int
+    fila_pendente: int
