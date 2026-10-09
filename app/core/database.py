@@ -13,7 +13,8 @@ DATABASE_URL = os.getenv(
     "postgresql+asyncpg://estoque_user:estoque_pass@localhost:5432/estoque_db",
 )
 
-engine = create_async_engine(DATABASE_URL, echo=False, pool_size=20, max_overflow=10)
+_pool_kwargs = {} if DATABASE_URL.startswith("sqlite") else {"pool_size": 20, "max_overflow": 10}
+engine = create_async_engine(DATABASE_URL, echo=False, **_pool_kwargs)
 
 AsyncSessionLocal = async_sessionmaker(
     bind=engine, class_=AsyncSession, expire_on_commit=False

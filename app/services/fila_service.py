@@ -19,9 +19,12 @@ import heapq
 import itertools
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
+
+from sqlalchemy import select
 
 from app.core.database import AsyncSessionLocal
+from app.models import Obra, Requisicao, StatusRequisicao
 from app.services.estoque_service import processar_requisicao
 
 logger = logging.getLogger("fila_service")
@@ -59,9 +62,17 @@ class FilaRequisicoes:
             prazo_entrega or datetime.max,
             criado_em,
         )
+        if criado_em.tzinfo is not None:
+            criado_em = criado_em.astimezone(timezone.utc).replace(tzinfo=None)
+        if prazo_entrega is not None and prazo_entrega.tzinfo is not None:
+            prazo_entrega = prazo_entrega.astimezone(timezone.utc).replace(tzinfo=None)
+        chave = (chave[0], chave[1], prazo_entrega or datetime.max, criado_em)
         async with self._lock:
             heapq.heappush(self._heap, ItemFila(chave, next(_counter), requisicao_id))
             self._novo_item.set()
+
+    def tamanho(self) -> int:
+        return len(self._heap)
 
     async def proximo(self) -> str | None:
         async with self._lock:
@@ -93,6 +104,39 @@ async def worker_loop(worker_id: str, fila: FilaRequisicoes):
                 )
         except Exception:
             logger.exception("Erro processando requisicao %s no %s", requisicao_id, worker_id)
+            await _marcar_erro(requisicao_id, worker_id)
+
+
+async def _marcar_erro(requisicao_id: str, worker_id: str):
+    try:
+        async with AsyncSessionLocal() as db:
+            req = await db.get(Requisicao, requisicao_id)
+            if req is not None:
+                req.status = StatusRequisicao.ERRO
+                req.worker_id = worker_id
+                await db.commit()
+    except Exception:
+        logger.exception("Falha ao marcar requisicao %s como erro", requisicao_id)
+
+
+async def reenfileirar_pendentes():
+    """Após restart, recoloca na fila o que ficou PENDENTE/EM_PROCESSAMENTO (a fila é em memória)."""
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Requisicao, Obra)
+            .join(Obra, Obra.id == Requisicao.obra_id)
+            .where(Requisicao.status.in_(
+                [StatusRequisicao.PENDENTE, StatusRequisicao.EM_PROCESSAMENTO]
+            ))
+        )
+        for req, obra in result.all():
+            await fila_global.adicionar(
+                requisicao_id=req.id,
+                parada_por_falta_material=obra.parada_por_falta_material,
+                nivel_prioridade=obra.nivel_prioridade,
+                prazo_entrega=obra.prazo_entrega,
+                criado_em=req.criado_em,
+            )
 
 
 async def iniciar_workers(n_workers: int = 3) -> list[asyncio.Task]:

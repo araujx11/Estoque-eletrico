@@ -67,7 +67,8 @@ uvicorn app.main:app --reload
 Isso já sobe **3 workers** consumindo a fila em background (definido em
 `app/main.py`, variável `N_WORKERS`).
 
-Acesse a documentação interativa em: http://localhost:8000/docs
+- **Front-end (painel visual):** http://localhost:8000/
+- Documentação interativa da API: http://localhost:8000/docs
 
 ### 4. Rode a demonstração do cenário de concorrência
 Em outro terminal, com a API rodando:
@@ -93,6 +94,7 @@ app/
 │   └── fila_service.py        # fila de prioridade + pool de workers
 └── api/
     └── routes.py               # endpoints REST
+frontend/index.html              # painel web (servido pela própria API em /)
 demo_concorrencia.py            # script que reproduz o cenário de disputa
 docker-compose.yml               # sobe o Postgres local
 ```

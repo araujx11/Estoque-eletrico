@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Estoque Elétrico</title>
+<style>
+  :root{--bg:#f4f6f9;--card:#fff;--tx:#1d2733;--mut:#6b7785;--bd:#dde3ea;--pri:#1f5fbf;
+    --ok:#1b8a4b;--okbg:#e0f4e9;--warn:#b7791f;--warnbg:#fdf1d8;--err:#c0392b;--errbg:#fbe3e0;
+    --info:#2b6cb0;--infobg:#e1ecf8;--neu:#5b6672;--neubg:#e8ebef}
+  @media (prefers-color-scheme:dark){:root{--bg:#12161b;--card:#1b2128;--tx:#e6ebf0;--mut:#8f9aa6;--bd:#2c3540;--pri:#5b9bff;
+    --ok:#4cc38a;--okbg:#17372a;--warn:#e5b74f;--warnbg:#3b3017;--err:#ef7b6e;--errbg:#3d1f1b;
+    --info:#7fb2f0;--infobg:#1b2d44;--neu:#a3adb8;--neubg:#27303a}}
+  *{box-sizing:border-box}
+  body{margin:0;font:14px/1.45 system-ui,sans-serif;background:var(--bg);color:var(--tx)}
+  header{padding:14px 16px;border-bottom:1px solid var(--bd);background:var(--card);display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  header h1{font-size:18px;margin:0;flex:1}
+  .conn{font-size:12px;padding:3px 10px;border-radius:99px;background:var(--neubg);color:var(--neu)}
+  .conn.on{background:var(--okbg);color:var(--ok)} .conn.off{background:var(--errbg);color:var(--err)}
+  main{max-width:1200px;margin:0 auto;padding:16px;display:grid;gap:16px}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+  .stat{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:10px 12px}
+  .stat b{display:block;font-size:24px} .stat span{color:var(--mut);font-size:12px}
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px}
+  section{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px;min-width:0}
+  h2{font-size:15px;margin:0 0 10px}
+  form{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:12px}
+  form .full{grid-column:1/-1}
+  label{display:grid;gap:3px;font-size:12px;color:var(--mut)}
+  input,select,button{font:inherit;padding:7px 8px;border:1px solid var(--bd);border-radius:6px;background:var(--bg);color:var(--tx);min-width:0}
+  button{background:var(--pri);color:#fff;border:0;cursor:pointer;font-weight:600}
+  button:hover{filter:brightness(1.1)}
+  label.chk{display:flex;align-items:center;gap:6px;color:var(--tx)} label.chk input{width:auto}
+  .tw{overflow-x:auto}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--bd);white-space:nowrap}
+  th{color:var(--mut);font-weight:500;font-size:12px}
+  .badge{display:inline-block;padding:2px 9px;border-radius:99px;font-size:12px;font-weight:600}
+  .s-aprovada{background:var(--okbg);color:var(--ok)}
+  .s-parcial{background:var(--warnbg);color:var(--warn)}
+  .s-negada,.s-erro{background:var(--errbg);color:var(--err)}
+  .s-pendente{background:var(--neubg);color:var(--neu)}
+  .s-em_processamento{background:var(--infobg);color:var(--info)}
+  .bar{height:8px;background:var(--neubg);border-radius:4px;min-width:90px;overflow:hidden}
+  .bar i{display:block;height:100%;background:var(--ok)} .bar.crit i{background:var(--err)}
+  .empty{color:var(--mut);padding:8px 0}
+  #toasts{position:fixed;right:12px;bottom:12px;display:grid;gap:8px;z-index:9}
+  .toast{padding:9px 14px;border-radius:8px;background:var(--card);border:1px solid var(--bd);border-left:4px solid var(--pri);box-shadow:0 2px 8px #0003}
+  .toast.err{border-left-color:var(--err)} .toast.ok{border-left-color:var(--ok)}
+</style>
+</head>
+<body>
+<header>
+  <h1>⚡ Controle de Estoque — Engenharia Elétrica</h1>
+  <span id="conn" class="conn">conectando…</span>
+  <a href="/docs" style="color:var(--pri);font-size:13px">API docs</a>
+</header>
+<main>
+  <div class="cards" id="cards"></div>
+
+  <div class="grid2">
+    <section>
+      <h2>Novo material</h2>
+      <form id="fMat">
+        <label class="full">Nome<input name="nome" required></label>
+        <label>Quantidade<input name="quantidade_estoque" type="number" min="0" step="any" required></label>
+        <label>Unidade<select name="unidade" id="selUnidade"></select></label>
+        <label>Estoque crítico<input name="estoque_critico" type="number" min="0" step="any" value="0"></label>
+        <button class="full">Cadastrar material</button>
+      </form>
+      <div class="tw"><table id="tMat"></table></div>
+    </section>
+
+    <section>
+      <h2>Nova obra</h2>
+      <form id="fObra">
+        <label>Nome<input name="nome" required></label>
+        <label>Cidade<input name="cidade" required></label>
+        <label>Prioridade (1 = mais urgente)
+          <select name="nivel_prioridade"><option>1</option><option>2</option><option>3</option><option>4</option><option selected>5</option></select></label>
+        <label>Prazo de entrega<input name="prazo_entrega" type="datetime-local"></label>
+        <label class="chk full"><input name="parada_por_falta_material" type="checkbox"> Obra parada por falta de material</label>
+        <button class="full">Cadastrar obra</button>
+      </form>
+      <div class="tw"><table id="tObra"></table></div>
+    </section>
+  </div>
+
+  <section>
+    <h2>Nova requisição</h2>
+    <form id="fReq" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));align-items:end">
+      <label>Obra<select name="obra_id" id="selObra" required></select></label>
+      <label>Material<select name="material_id" id="selMat" required></select></label>
+      <label>Quantidade<input name="quantidade_solicitada" type="number" min="0.001" step="any" required></label>
+      <button>Enviar para a fila</button>
+    </form>
+    <h2>Requisições <small style="color:var(--mut);font-weight:400">(atualiza sozinho a cada 2s)</small></h2>
+    <div class="tw"><table id="tReq"></table></div>
+  </section>
+</main>
+<div id="toasts"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const STATUS = {pendente:'Pendente',em_processamento:'Processando',aprovada:'Aprovada',parcial:'Parcial',negada:'Negada',erro:'Erro'};
+const esc = v => String(v ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let materiais = [], obras = [], reqs = [], ultimoStatus = {}, primeira = true;
+
+async function api(path, opts) {
+  const r = await fetch(path, opts && {...opts, headers: {'Content-Type': 'application/json'}});
+  if (!r.ok) {
+    let msg = r.statusText;
+    try { const j = await r.json(); msg = Array.isArray(j.detail) ? j.detail.map(d => `${d.loc.slice(1).join('.')}: ${d.msg}`).join('; ') : j.detail; } catch {}
+    throw new Error(msg);
+  }
+  return r.json();
+}
+function toast(msg, tipo = '') {
+  const t = document.createElement('div'); t.className = 'toast ' + tipo; t.textContent = msg;
+  $('#toasts').append(t); setTimeout(() => t.remove(), 5000);
+}
+const fmt = n => Number(n).toLocaleString('pt-BR', {maximumFractionDigits: 3});
+const nomeObra = id => obras.find(o => o.id === id)?.nome ?? '#' + id;
+const matDe = id => materiais.find(m => m.id === id);
+
+function renderCards(r) {
+  const c = [['Total', r.total_requisicoes], ['Na fila', r.fila_pendente],
+    ...Object.entries(STATUS).map(([k, v]) => [v, r.por_status[k] ?? 0]), ['Materiais críticos', r.materiais_criticos]];
+  $('#cards').innerHTML = c.map(([l, n]) => `<div class="stat"><b>${n}</b><span>${l}</span></div>`).join('');
+}
+function renderMat() {
+  $('#tMat').innerHTML = materiais.length ? `<tr><th>Material</th><th>Estoque</th><th>Nível</th></tr>` + materiais.map(m => {
+    const max = Math.max(m.quantidade_estoque, m.estoque_critico * 3, 1), crit = m.quantidade_estoque <= m.estoque_critico;
+    return `<tr><td>${esc(m.nome)}</td><td>${fmt(m.quantidade_estoque)} ${esc(m.unidade)}</td>
+      <td><div class="bar ${crit ? 'crit' : ''}" title="${crit ? 'Abaixo do crítico' : 'OK'}"><i style="width:${m.quantidade_estoque / max * 100}%"></i></div></td></tr>`;
+  }).join('') : '<tr><td class="empty">Nenhum material.</td></tr>';
+  const keep = [$('#selMat').value];
+  $('#selMat').innerHTML = materiais.map(m => `<option value="${m.id}">${esc(m.nome)} (${fmt(m.quantidade_estoque)} ${esc(m.unidade)})</option>`).join('');
+  if (keep[0]) $('#selMat').value = keep[0];
+}
+function renderObras() {
+  $('#tObra').innerHTML = obras.length ? `<tr><th>Obra</th><th>Cidade</th><th>Prio.</th><th>Prazo</th><th>Parada</th></tr>` + obras.map(o =>
+    `<tr><td>${esc(o.nome)}</td><td>${esc(o.cidade)}</td><td>${o.nivel_prioridade}</td>
+     <td>${o.prazo_entrega ? new Date(o.prazo_entrega + 'Z').toLocaleString('pt-BR') : '—'}</td>
+     <td>${o.parada_por_falta_material ? '⚠️ sim' : 'não'}</td></tr>`).join('') : '<tr><td class="empty">Nenhuma obra.</td></tr>';
+  const keep = $('#selObra').value;
+  $('#selObra').innerHTML = obras.map(o => `<option value="${o.id}">${esc(o.nome)} — ${esc(o.cidade)}</option>`).join('');
+  if (keep) $('#selObra').value = keep;
+}
+function renderReqs() {
+  $('#tReq').innerHTML = reqs.length ? `<tr><th>Status</th><th>Obra</th><th>Material</th><th>Solicitado</th><th>Atendido</th><th>Worker</th><th>Criado</th></tr>` +
+    reqs.slice(0, 50).map(r => { const m = matDe(r.material_id), u = m?.unidade ?? '';
+      return `<tr><td><span class="badge s-${r.status}">${STATUS[r.status]}</span></td><td>${esc(nomeObra(r.obra_id))}</td>
+      <td>${esc(m?.nome ?? '#' + r.material_id)}</td><td>${fmt(r.quantidade_solicitada)} ${esc(u)}</td>
+      <td>${fmt(r.quantidade_atendida)} ${esc(u)}</td><td>${esc(r.worker_id ?? '—')}</td>
+      <td>${new Date(r.criado_em + 'Z').toLocaleTimeString('pt-BR')}</td></tr>`; }).join('')
+    : '<tr><td class="empty">Nenhuma requisição.</td></tr>';
+}
+function notificarMudancas() {
+  for (const r of reqs) {
+    const antes = ultimoStatus[r.id];
+    if (!primeira && antes !== r.status && !['pendente', 'em_processamento'].includes(r.status)) {
+      const tipo = r.status === 'aprovada' ? 'ok' : r.status === 'parcial' ? '' : 'err';
+      toast(`${nomeObra(r.obra_id)}: ${STATUS[r.status].toUpperCase()} (${fmt(r.quantidade_atendida)}/${fmt(r.quantidade_solicitada)})`, tipo);
+    }
+    ultimoStatus[r.id] = r.status;
+  }
+  primeira = false;
+}
+async function atualizar() {
+  try {
+    [materiais, obras, reqs] = await Promise.all([api('/materiais'), api('/obras'), api('/requisicoes')]);
+    renderCards(await api('/resumo'));
+    renderMat(); renderObras(); renderReqs(); notificarMudancas();
+    $('#conn').textContent = 'API conectada'; $('#conn').className = 'conn on';
+  } catch (e) { $('#conn').textContent = 'API offline'; $('#conn').className = 'conn off'; }
+}
+function formJson(f) {
+  const o = {};
+  for (const el of f.elements) {
+    if (!el.name) continue;
+    if (el.type === 'checkbox') o[el.name] = el.checked;
+    else if (el.value === '') o[el.name] = null;
+    else o[el.name] = el.type === 'number' || el.tagName === 'SELECT' && /^\d+$/.test(el.value) ? Number(el.value) : el.value;
+  }
+  return o;
+}
+function enviar(form, path, after) {
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    try {
+      const body = formJson(form);
+      if ('prazo_entrega' in body && body.prazo_entrega) body.prazo_entrega = new Date(body.prazo_entrega).toISOString();
+      await api(path, {method: 'POST', body: JSON.stringify(body)});
+      toast('Enviado com sucesso', 'ok'); after?.(form); atualizar();
+    } catch (err) { toast(err.message, 'err'); }
+  });
+}
+enviar($('#fMat'), '/materiais', f => f.reset());
+enviar($('#fObra'), '/obras', f => f.reset());
+enviar($('#fReq'), '/requisicoes', f => f.elements.quantidade_solicitada.value = '');
+
+(async () => {
+  try { $('#selUnidade').innerHTML = (await api('/unidades')).map(u => `<option value="${esc(u.valor)}" title="${esc(u.descricao)}">${esc(u.valor)} — ${esc(u.descricao)}</option>`).join(''); } catch {}
+  atualizar(); setInterval(atualizar, 2000);
+})();
+</script>
+</body>
+</html>
