@@ -9,7 +9,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import String, Integer, Float, ForeignKey, DateTime, Enum, func
+from sqlalchemy import String, Integer, Float, ForeignKey, DateTime, Enum, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -22,6 +22,11 @@ class StatusRequisicao(str, enum.Enum):
     PARCIAL = "parcial"            # atendida parcialmente (déficit)
     NEGADA = "negada"              # sem estoque algum
     ERRO = "erro"
+
+
+class StatusObra(str, enum.Enum):
+    EM_ANDAMENTO = "em_andamento"
+    FINALIZADA = "finalizada"
 
 
 class Material(Base):
@@ -46,6 +51,11 @@ class Obra(Base):
     parada_por_falta_material: Mapped[bool] = mapped_column(default=False)
     # menor número = maior prioridade (1 = mais urgente)
     nivel_prioridade: Mapped[int] = mapped_column(Integer, default=5)
+    # andamento: progresso 0-100; 100 <=> finalizada
+    status: Mapped[str] = mapped_column(String(20), default=StatusObra.EM_ANDAMENTO.value, server_default=StatusObra.EM_ANDAMENTO.value)
+    progresso: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    descricao_andamento: Mapped[str | None] = mapped_column(Text, nullable=True)
+    finalizada_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     requisicoes: Mapped[list["Requisicao"]] = relationship(back_populates="obra")
 
