@@ -1,0 +1,39 @@
+{
+  "data": "2026-10-28 23:49:24",
+  "python": "3.13.12",
+  "so": "Windows-11-10.0.26200-SP0",
+  "processador": "AMD64 Family 25 Model 80 Stepping 0, AuthenticAMD",
+  "cpus_logicas": 16,
+  "postgresql": "PostgreSQL 16.15 on x86_64-pc-linux-musl",
+  "postgres_em_docker": "sim (estoque_postgres|postgres:16-alpine|0.0.0.0:5432->5432/tcp, [::]:5432->5432/tcp)",
+  "pool_size": 20,
+  "max_overflow": 10,
+  "banco": "estoque_bench",
+  "parametros": {
+    "requisicoes": 1000,
+    "materiais": 50,
+    "workers": [],
+    "workers_controle": [
+      1,
+      4,
+      16
+    ],
+    "processos": [],
+    "execucoes": 5,
+    "cenarios": [
+      "alta",
+      "baixa"
+    ],
+    "sem_controle": true,
+    "sem_baseline": true,
+    "comparar_versoes": true,
+    "decompor_indices": true,
+    "workers_comparacao": [
+      4,
+      16
+    ],
+    "semente": 42,
+    "saida": "benchmarks/resultados/comparacao_versoes",
+    "rapido": false
+  }
+}

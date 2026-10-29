@@ -19,13 +19,14 @@ import heapq
 import itertools
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import select
 
 from app.core.database import AsyncSessionLocal
 from app.models import Obra, Requisicao, StatusRequisicao
 from app.services.estoque_service import processar_requisicao
+from app.services.prioridade import chave_prioridade
 
 logger = logging.getLogger("fila_service")
 
@@ -55,18 +56,8 @@ class FilaRequisicoes:
         prazo_entrega: datetime | None,
         criado_em: datetime,
     ):
-        # menor tupla = processado primeiro
-        chave = (
-            0 if not parada_por_falta_material else -1,  # obra parada vem primeiro
-            nivel_prioridade,
-            prazo_entrega or datetime.max,
-            criado_em,
-        )
-        if criado_em.tzinfo is not None:
-            criado_em = criado_em.astimezone(timezone.utc).replace(tzinfo=None)
-        if prazo_entrega is not None and prazo_entrega.tzinfo is not None:
-            prazo_entrega = prazo_entrega.astimezone(timezone.utc).replace(tzinfo=None)
-        chave = (chave[0], chave[1], prazo_entrega or datetime.max, criado_em)
+        # menor tupla = processado primeiro (regra em app/services/prioridade.py, compartilhada com o diagnóstico)
+        chave = chave_prioridade(parada_por_falta_material, nivel_prioridade, prazo_entrega, criado_em)
         async with self._lock:
             heapq.heappush(self._heap, ItemFila(chave, next(_counter), requisicao_id))
             self._novo_item.set()
