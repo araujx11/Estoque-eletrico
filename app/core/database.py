@@ -5,8 +5,12 @@ A engine assíncrona (asyncpg) é o que permite que múltiplas requisições
 concorrentes conversem com o banco sem bloquear o event loop do FastAPI.
 """
 import os
+
+from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
+
+load_dotenv()
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
@@ -43,5 +47,10 @@ async def init_models():
                 "ALTER TABLE obras ADD COLUMN IF NOT EXISTS descricao_andamento TEXT",
                 "ALTER TABLE obras ADD COLUMN IF NOT EXISTS finalizada_em TIMESTAMP",
                 "ALTER TABLE requisicoes ADD COLUMN IF NOT EXISTS pedido_id VARCHAR(36)",
+                "ALTER TABLE requisicoes ADD COLUMN IF NOT EXISTS solicitante_id INTEGER REFERENCES usuarios(id)",
+                "CREATE INDEX IF NOT EXISTS ix_requisicoes_obra_id ON requisicoes (obra_id)",
+                "CREATE INDEX IF NOT EXISTS ix_requisicoes_material_id ON requisicoes (material_id)",
+                "CREATE INDEX IF NOT EXISTS ix_requisicoes_status ON requisicoes (status)",
+                "CREATE INDEX IF NOT EXISTS ix_requisicoes_criado_em ON requisicoes (criado_em)",
             ):
                 await conn.exec_driver_sql(ddl)

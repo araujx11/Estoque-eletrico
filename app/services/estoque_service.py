@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Material, Requisicao, StatusRequisicao
+from app.models import Material, MovimentacaoEstoque, Requisicao, StatusRequisicao, TipoMovimentacao
 
 
 async def processar_requisicao(db: AsyncSession, requisicao_id: str, worker_id: str) -> Requisicao:
@@ -60,6 +60,17 @@ async def processar_requisicao(db: AsyncSession, requisicao_id: str, worker_id: 
             material.quantidade_estoque = 0
             requisicao.quantidade_atendida = disponivel
             requisicao.status = StatusRequisicao.PARCIAL
+
+        if requisicao.quantidade_atendida > 0:
+            # livro-razão: a SAÍDA entra na MESMA transação do débito (segura o mesmo lock do material),
+            # então saldo_apos reflete exatamente o estoque logo depois deste débito
+            db.add(MovimentacaoEstoque(
+                material_id=material.id,
+                tipo=TipoMovimentacao.SAIDA,
+                quantidade=requisicao.quantidade_atendida,
+                saldo_apos=material.quantidade_estoque,
+                requisicao_id=requisicao.id,
+            ))
 
         requisicao.processado_em = datetime.now(timezone.utc).replace(tzinfo=None)
         # commit acontece ao sair do `async with db.begin()`, liberando o lock
