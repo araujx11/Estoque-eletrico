@@ -139,8 +139,8 @@ Usuários de demonstração (senha de todos: `demo12345`): `gestor@demo.local`, 
 `eng.recife@demo.local`, `eng.jaboatao@demo.local`, `eng.olinda@demo.local`.
 Roteiro sugerido: com `N_WORKERS=0`, mostre o Diagnóstico (🔴 Cabo 10 mm²: estoque 100 m, demanda 120 m, déficit 20 m); depois reinicie a API
 com **`N_WORKERS=1`** e veja os pedidos serem processados exatamente como o diagnóstico previu (conferido: 8 de 8 pedidos).
-Com `N_WORKERS=3` o resultado pode divergir da previsão quando dois pedidos do mesmo material são processados ao mesmo tempo
-(ver a limitação em `docs/relatorios-e-diagnostico.md` e o achado 14 em `docs/achados.md`).
+Até a Sprint 05, com `N_WORKERS=3` o resultado podia divergir da previsão quando dois pedidos do mesmo material eram processados ao mesmo tempo
+(achado 14); com as **senhas por material** a prioridade vale na alocação também com vários workers (ver `docs/achados.md` e `docs/relatorios-e-diagnostico.md`).
 
 ### Testes automatizados e benchmark
 
@@ -163,15 +163,16 @@ pip install -r requirements-dev.txt        # pytest, pytest-asyncio, matplotlib
 
 pytest                                     # tudo (~35 s)
 pytest -m "not stress"                     # pula o teste de estresse (200 requisições simultâneas)
-pytest tests/test_reprocessamento.py --runxfail   # mostra os números dos ACHADOS (docs/achados.md)
+pytest tests/test_senhas_fila.py tests/test_prioridade_concorrente.py tests/test_reprocessamento.py   # achados 14 e 1 (corrigidos)
 ```
 
 O que os testes cobrem: regras de alocação (aprovada/parcial/negada), o cenário do enunciado (100 m, 40/30/50
 simultâneos), estresse com 200 requisições disputando um material, isolamento entre materiais, ordem da
 fila de prioridade, priorização de ponta a ponta com 1 worker, reprocessamento e reinício, validação de
 entradas (404/422/409), login/401/403 por perfil e um fluxo completo pela API com workers reais.
-Os testes `xfail` documentam os **achados 1** (reprocessamento duplica o débito) e **14** (com vários workers a prioridade pode
-inverter na alocação): são falhas conhecidas, não regressões.
+Os **achados 1** (reprocessamento duplicava o débito) e **14** (com vários workers a prioridade podia inverter na alocação) foram
+**corrigidos na Sprint 05**: os testes que os documentavam (`xfail`) agora passam, e há testes novos de idempotência, de senhas por
+material e de mensagens de erro em português (`tests/test_mensagens_erro.py`). Regras de negócio: `docs/regras-de-negocio.md`.
 
 #### Benchmark de concorrência
 ```powershell
@@ -229,7 +230,8 @@ app/
 │   ├── database.py            # engine assíncrona + sessão do banco
 │   ├── config.py              # variáveis do .env
 │   ├── security.py            # bcrypt + JWT
-│   └── auth.py                # get_current_user, exigir_perfis
+│   ├── auth.py                # get_current_user, exigir_perfis
+│   └── erros.py               # mensagens de erro em português (422 e textos padrão)
 ├── services/
 │   ├── estoque_service.py     # <- lógica crítica de lock/consistência (+ saída no livro-razão)
 │   ├── fila_service.py        # fila de prioridade + pool de workers

@@ -303,3 +303,31 @@ python -m benchmarks.bench_concorrencia              # ~30 min; gera CSV, resumo
 python -m benchmarks.relatorio                       # regenera resumo.md e gráficos a partir do CSV
 ```
 Não rode `pytest` nem outros programas pesados durante o benchmark (competem pelo mesmo Postgres e pelos mesmos núcleos).
+
+
+## 11. Efeito da correção do achado 14 (Sprint 05)
+
+A correção das **senhas por material** (`docs/achados.md`, achado 14) podia custar desempenho na alta contenção, porque controla a ordem de acesso ao mesmo
+material. Foi medido com `--rapido`, em **rodadas intercaladas** (por causa da deriva do ambiente, §6) e o speedup de cada configuração foi calculado
+**sobre a linha de base sequencial da mesma rodada**, o que cancela a mudança de fase da máquina.
+Antes = código sem a correção (4 rodadas); v1 = liberar a senha no fim do item anterior (2 rodadas); v2 = liberar quando o item anterior trava o material (2 rodadas, a versão adotada).
+
+| Configuração (cenário · modo · workers) | Antes | v1 | v2 (adotada) | v2 / antes |
+|---|--:|--:|--:|--:|
+| alta · com_lock · 1 | 1.05× | 1.04× | 0.99× | 0.94 |
+| alta · com_lock · 16 | 1.85× | 1.86× | 1.83× | 0.99 |
+| alta · multiprocesso · 8×2 | 1.90× | 1.69× | 1.92× | 1.01 |
+| alta · workers · 1 | 0.92× | 1.09× | 1.01× | 1.10 |
+| alta · workers · 4 | 1.96× | 0.95× | 1.93× | 0.98 |
+| alta · workers · 16 | 1.82× | 1.04× | 1.73× | 0.95 |
+| baixa · multiprocesso · 8×2 | 3.98× | 3.51× | 4.06× | 1.02 |
+| baixa · workers · 1 | 0.99× | 1.02× | 0.99× | 1.00 |
+| baixa · workers · 4 | 2.69× | 2.67× | 2.62× | 0.97 |
+| baixa · workers · 16 | 2.92× | 3.48× | 3.00× | 1.03 |
+
+Leitura honesta:
+* A **v1 quase eliminou o ganho na alta contenção** (4 workers: 1,96× → 0,95×; 16 workers: 1,82× → 1,04×), porque a transação inteira do próximo item esperava a anterior.
+* A **v2 voltou ao patamar anterior**: as razões v2/antes ficam entre 0,95 e 1,10, **dentro do ruído** conhecido do ambiente (diferenças menores que ≈ 10 % não são conclusivas, §6).
+  Não se pode afirmar que a v2 é "igual", só que **não se mediu perda além do ruído**.
+* Em todas as 8 rodadas, com lock: **0 invariantes violados, 0 unidades vendidas a mais, 0 erros**. O controle negativo (`sem_lock`) continua mostrando a condição de corrida.
+* A correção é de **ordem** (prioridade), não de consistência: o saldo já era seguro com o lock.

@@ -1,16 +1,18 @@
 # Achados (bugs e fragilidades) — com correção proposta
 
-Encontrados durante a escrita dos testes e do benchmark. **Nenhuma correção foi aplicada**: a lógica de
-produção (`estoque_service`, `fila_service`, modelos) permanece como estava. Cada item cita o teste ou
-a medição que o evidencia.
+Encontrados durante a escrita dos testes e do benchmark. Cada item cita o teste ou a medição que o evidencia.
+
+**Atualização da Sprint 05:** os achados **1** (idempotência) e **14** (prioridade com vários workers) e o novo achado **15**
+(mensagens de validação em inglês) foram **corrigidos**, com testes e medições antes/depois (ver "Correção aplicada" em cada um).
+O achado 2 ficou **mitigado** pela correção do 1. Os demais continuam sem correção.
 
 ## Resumo
 
 | # | Achado | Severidade | Evidência |
 |---|---|---|---|
-| 14 | **Com mais de 1 worker a prioridade não vale na alocação do estoque**: a fila retira em ordem, mas os itens correm juntos e o lock do material vai para quem chegar primeiro (inversões medidas de 0 % a 35 % conforme as condições, com 3 ou 8 workers; sempre 0 % com 1) | **Alta** (é o requisito central de priorização) | `tests/test_prioridade_concorrente.py` (xfail) e experimento em `docs/relatorios-e-diagnostico.md` |
-| 1 | `processar_requisicao` não é idempotente: reprocessar a mesma requisição debita o estoque de novo | **Alta** | `tests/test_reprocessamento.py` (2 testes `xfail`) |
-| 2 | Com mais de um processo da API (`uvicorn --workers N`), cada processo tem sua própria fila e reenfileira *todas* as pendentes na partida → duplicidade → dispara o achado 1 | **Alta** (se escalar horizontalmente) | análise de `main.py`/`fila_service.py`; teste de reinício |
+| 14 | ✅ **CORRIGIDO na Sprint 05.** **Com mais de 1 worker a prioridade não vale na alocação do estoque**: a fila retira em ordem, mas os itens correm juntos e o lock do material vai para quem chegar primeiro (inversões medidas de 0 % a 35 % conforme as condições, com 3 ou 8 workers; sempre 0 % com 1) | **Alta** (é o requisito central de priorização) | `tests/test_prioridade_concorrente.py` (xfail) e experimento em `docs/relatorios-e-diagnostico.md` |
+| 1 | ✅ **CORRIGIDO na Sprint 05.** `processar_requisicao` não era idempotente: reprocessar a mesma requisição debita o estoque de novo | **Alta** | `tests/test_reprocessamento.py` (2 testes `xfail`) |
+| 2 | ⚠️ **Mitigado pela correção do 1** (a duplicidade na fila já não debita de novo; a fila duplicada continua existindo). Com mais de um processo da API (`uvicorn --workers N`), cada processo tem sua própria fila e reenfileira *todas* as pendentes na partida → duplicidade → dispara o achado 1 | **Alta** (se escalar horizontalmente) | análise de `main.py`/`fila_service.py`; teste de reinício |
 | 3 | Requisições em `ERRO` nunca são reprocessadas; falhas transitórias (ex.: perda de conexão) viram erro definitivo | Média | análise de `worker_loop`/`_marcar_erro` |
 | 4 | A API grava a requisição e só depois a coloca na fila: entre os dois passos a requisição fica sem dono até a próxima reinicialização | Baixa | análise de `routes.py` |
 | 5 | Mais workers que conexões do pool (`pool_size=20 + max_overflow=10 = 30`) não dá ganho, e o excedente só espera conexão | Baixa | análise do código (32 workers **não foi medido**; o benchmark mede até 16) |
@@ -21,6 +23,7 @@ a medição que o evidencia.
 | 10 | `PUT /materiais/{id}` ainda aceita mudar `quantidade_estoque` (vira `AJUSTE` com motivo genérico), contornando o “motivo obrigatório” | Baixa | `test_edicao_de_quantidade_vira_ajuste` |
 | 11 | Remover material apaga o histórico de movimentações dele; remover obra com histórico apaga as requisições (as saídas ficam, sem vínculo) | Média | `test_remover_*` |
 | 12 | Falhas de login são auditadas **sem autenticação**: quem insistir gera linhas sem limite (crescimento de tabela / ruído), e não há *rate limit* | Média | análise (`/auth/login`) |
+| 15 | ✅ **CORRIGIDO na Sprint 05.** Mensagens de validação (422) em inglês e a resposta **ecoava o valor enviado** (inclusive senhas) | Média | `tests/test_mensagens_erro.py`; conferido na API antes e depois |
 | 13 | O livro-razão custou ≈ 4–13 % de throughput (o `INSERT` extra dentro do lock); dá para fundir débito e registro em 1 comando SQL | Informativa | A/B em `docs/benchmark.md` §7 |
 
 ## 1. Reprocessamento duplica o débito (ALTA)
@@ -56,6 +59,12 @@ async with db.begin():
 
 Lock sempre na ordem requisição → material (todos os workers seguem a mesma ordem, sem risco de deadlock).
 Ao aplicar, remover os `@pytest.mark.xfail(strict=True)` dos dois testes (o `strict` avisa com XPASS).
+
+**Correção aplicada (Sprint 05).** `processar_requisicao` agora trava a linha da requisição (`FOR UPDATE`) antes da do material e devolve,
+sem debitar, quem já está `APROVADA`, `PARCIAL` ou `NEGADA` (ERRO não é estado final: a transação que falhou foi desfeita). A ordem de
+locks é sempre requisição → material (nenhuma outra rota trava material e depois requisição, então não há deadlock). Antes: estoque 40
+em vez de 70 nos dois testes; depois: 70. Os dois `xfail` viraram testes normais e há 5 novos (várias repetições, parcial/negada, 10
+workers na mesma requisição, requisição em ERRO e o gancho da fila).
 
 ## 2. Vários processos da API reenfileiram tudo (ALTA, se escalar)
 
@@ -174,3 +183,34 @@ item mais prioritário (o que uma conexão fria faz de verdade) e mostra que out
 
 Ao aplicar, remover o `xfail` de `tests/test_prioridade_concorrente.py` (o `strict` avisa com XPASS) e reexecutar o benchmark, porque serializar por material pode
 reduzir o throughput na alta contenção (que já é limitada pela linha, ver `docs/benchmark.md`).
+
+**Correção aplicada (Sprint 05): "senhas por material".** `FilaRequisicoes.adicionar` recebe o `material_id`; ao retirar um item, **dentro do
+mesmo lock da fila**, ele ganha uma `Senha` na fila do seu material (ordem da senha = ordem de retirada = prioridade). O worker só abre a
+transação quando o item anterior do mesmo material já **travou o lock do material** (gancho `ao_travar_material` de `processar_requisicao`);
+como o próximo só pede o lock depois do anterior, a ordem é estrita. Materiais diferentes seguem em paralelo, e a senha é liberada sempre (`finally`),
+mesmo se o processamento falhar. Itens sem `material_id` continuam funcionando (não bloqueiam ninguém).
+
+*Versão 1 (descartada).* A primeira versão liberava a senha só no fim do item anterior. Funcionava (0 inversões), mas **serializava a transação inteira**:
+com 4 workers no mesmo material o speedup sobre a linha de base caiu de ≈ 1,96× para ≈ 0,95× (A/B intercalado, `docs/benchmark.md` §11).
+A versão 2 (liberar ao travar o lock) manteve a ordem e recuperou o desempenho (≈ 1,93×).
+
+**Medição antes/depois** (3 obras disputam 10 unidades, entram na fila em ordem inversa à prioridade; latência de abertura de
+conexão aleatória de 0 a 15 ms, semente fixa; 150 tentativas por linha):
+
+| Workers | Antes: obra mais prioritária levou o estoque | Depois |
+|---|--:|--:|
+| 1 (controle) | 60/60 (0 % de inversões) | n/a |
+| 3 | 50/150 (**66,7 %** de inversões) | **150/150 (0 %)** |
+| 8 | 47/150 (**68,7 %** de inversões) | **150/150 (0 %)** |
+
+(As taxas "antes" são maiores que as da tabela do início do achado porque a latência aleatória de 0 a 15 ms é uma condição severa e deixa a corrida quase aleatória.)
+O `xfail` de `tests/test_prioridade_concorrente.py` virou teste normal; há um novo com 25 rodadas de latência aleatória e 8 testes novos em
+`tests/test_senhas_fila.py`.
+
+## 15. Mensagens de validação em inglês e eco do valor enviado (MÉDIA)
+**O que acontecia.** Respostas 422 vinham do Pydantic, em inglês e com o nome técnico do campo (`quantidade_estoque: Input should be greater than or equal to 0`),
+e traziam o valor enviado em `input` (uma senha curta digitada voltava em texto claro na resposta). Textos padrão do FastAPI (`Not authenticated`) também em inglês.
+
+**Correção aplicada (Sprint 05).** `app/core/erros.py` registra tratadores que devolvem `{"detail": [{"loc", "campo", "msg", "type"}]}`, com o rótulo do campo
+(«Quantidade em estoque») e a mensagem em português («deve ser maior ou igual a 0»), sem `input` nem `ctx`; traduz também 401/404/405. O frontend usa o
+`campo` quando existe. Os `detail` já escritos em português pelas rotas não mudam. 34 testes em `tests/test_mensagens_erro.py`.
