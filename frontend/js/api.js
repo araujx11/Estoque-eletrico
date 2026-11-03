@@ -23,7 +23,8 @@ export function sair() {
 // ---- chamadas ----
 function mensagemDeErro(j, fallback) {
   if (!j || !j.detail) return fallback;
-  if (Array.isArray(j.detail)) return j.detail.map(d => `${(d.loc || []).slice(1).join('.')}: ${d.msg}`).join('; ');
+  // 422: o servidor já manda o rótulo do campo ("Quantidade em estoque") e a mensagem em português
+  if (Array.isArray(j.detail)) return j.detail.map(d => `${d.campo || (d.loc || []).slice(1).join('.')}: ${d.msg}`).join('; ');
   return j.detail;
 }
 

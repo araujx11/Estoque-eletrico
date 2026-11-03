@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.core.database import init_models
+from app.core.erros import registrar_tratadores
 from app.api.auth_routes import router as auth_router
 from app.api.diagnostico_routes import router as diagnostico_router
 from app.api.estoque_routes import router as estoque_router
@@ -45,6 +46,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
 )
+registrar_tratadores(app)      # mensagens de erro em português (422 e textos padrão do framework)
 
 app.include_router(auth_router)
 app.include_router(router)
