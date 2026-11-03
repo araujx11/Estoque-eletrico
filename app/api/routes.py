@@ -308,6 +308,7 @@ async def criar_requisicao(
         nivel_prioridade=obra.nivel_prioridade,
         prazo_entrega=obra.prazo_entrega,
         criado_em=requisicao.criado_em or datetime.now(timezone.utc),
+        material_id=requisicao.material_id,
     )
     return requisicao
 
@@ -348,6 +349,7 @@ async def criar_pedido(
             nivel_prioridade=obra.nivel_prioridade,
             prazo_entrega=obra.prazo_entrega,
             criado_em=r.criado_em or datetime.now(timezone.utc),
+            material_id=r.material_id,
         )
     return requisicoes
 

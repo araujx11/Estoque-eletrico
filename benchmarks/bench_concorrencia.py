@@ -110,7 +110,7 @@ async def preparar(n_req: int, n_mat: int, semente: int) -> Carga:
         db.add_all(r for r, _ in reqs)
         await db.commit()
         estoque = {m.id: m.quantidade_estoque for m in materiais}
-        itens = [(r.id, o.parada_por_falta_material, o.nivel_prioridade, o.prazo_entrega, r.criado_em)
+        itens = [(r.id, o.parada_por_falta_material, o.nivel_prioridade, o.prazo_entrega, r.criado_em, r.material_id)
                  for r, o in reqs]
     return Carga(itens, estoque)
 
