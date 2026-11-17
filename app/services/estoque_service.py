@@ -107,6 +107,7 @@ async def _alocar(db: AsyncSession, requisicao: Requisicao, worker_id: str, ao_t
             quantidade=requisicao.quantidade_atendida,
             saldo_apos=material.quantidade_estoque,
             requisicao_id=requisicao.id,
+            usuario_id=requisicao.solicitante_id,      # responsável (RF16); nulo em registros antigos, sem erro
         ))
 
     requisicao.processado_em = datetime.now(timezone.utc).replace(tzinfo=None)

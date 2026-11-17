@@ -75,6 +75,11 @@ crescente entre as tentativas, até `ERRO_MAX_TENTATIVAS` (padrão 3). Depois di
 **Implementação.** `fila_service._marcar_erro`, `reprocessar_erros` e `reprocessar_erros_loop`; configuração por variáveis de ambiente (README).
 **Testes.** `tests/test_fila_erros.py` (Parte B).
 
+### RN20 (nova, RF16) — Toda movimentação registra o responsável
+**Regra.** Entradas, ajustes, devoluções e **saídas** guardam quem foi o responsável. Na saída gerada pelo processamento de uma requisição, o responsável é o **solicitante** da
+requisição; se ela não tem solicitante (registro anterior à autenticação), fica vazio, sem erro (a tela mostra "sistema"). A migração `0004` preenche as saídas já existentes.
+**Testes.** `tests/test_responsavel_saidas.py`.
+
 ## 3. Regras que já existiam no código e não estavam no planejamento
 
 Registradas agora, para o documento refletir o que o sistema de fato faz:
