@@ -30,7 +30,8 @@ export async function montar(el) {
       </form></section>
     <div id="bannerSim"></div>
     <div id="semaforos" class="diag-grid"></div>
-    <section><h2>Déficit histórico (pedidos já resolvidos como parciais ou negados)</h2><div class="tw" id="historico"></div></section>`;
+    <section><h2>Déficit histórico (pedidos já resolvidos como parciais ou negados)</h2><div class="tw" id="historico"></div></section>
+    <section><h2>Requisições com erro</h2><div class="tw" id="erros"></div></section>`;
 
   const barra = m => {
     const maior = Math.max(m.estoque_atual, m.demanda_total, 1);
@@ -68,6 +69,14 @@ export async function montar(el) {
       ? `<table><tr><th>Material</th><th>Parciais</th><th>Negadas</th><th>Déficit acumulado</th></tr>` + d.deficit_historico.map(h =>
         `<tr><td>${esc(h.nome)}</td><td>${h.requisicoes_parciais}</td><td>${h.requisicoes_negadas}</td><td>${fmt(h.deficit_acumulado)} ${esc(h.unidade)}</td></tr>`).join('') + '</table>'
       : '<div class="empty">Nenhum déficit histórico.</div>';
+
+    // requisições que falharam: em nova tentativa automática ou em erro definitivo (esgotou as tentativas)
+    $('#erros', el).innerHTML = d.erros && d.erros.length
+      ? `<table><tr><th>Obra</th><th>Material</th><th>Quantidade</th><th>Tentativas</th><th>Situação</th><th>Último erro</th></tr>` + d.erros.map(e =>
+        `<tr><td>${esc(e.obra_nome)}</td><td>${esc(e.material_nome)}</td><td>${fmt(e.quantidade_solicitada)} ${esc(e.unidade)}</td>
+          <td>${e.tentativas} de ${e.max_tentativas}</td>
+          <td>${e.definitivo ? '🔴 Erro definitivo' : '🟡 Será reprocessada'}</td><td>${esc(e.ultimo_erro || '')}</td></tr>`).join('') + '</table>'
+      : '<div class="empty">Nenhuma requisição com erro.</div>';
   }
 
   async function carregar() {
