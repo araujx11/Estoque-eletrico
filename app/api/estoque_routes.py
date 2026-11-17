@@ -7,9 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import exigir_perfis
 from app.core.database import get_db
-from app.models import LogAuditoria, Material, MovimentacaoEstoque, Perfil, TipoMovimentacao, Usuario
+from app.models import (
+    LogAuditoria, Material, MovimentacaoEstoque, Obra, Perfil, Requisicao, StatusRequisicao, TipoMovimentacao, Usuario,
+)
 from app.schemas import (
-    AjusteCreate, AuditoriaOut, AuditoriaPagina, EntradaCreate, MaterialOut, MovimentacaoOut, MovimentacoesPagina,
+    AjusteCreate, AuditoriaOut, AuditoriaPagina, DevolucaoCreate, EntradaCreate, MaterialOut, MovimentacaoOut, MovimentacoesPagina,
 )
 from app.services import auditoria_service
 
@@ -56,9 +58,10 @@ async def listar_movimentacoes(
     base = select(MovimentacaoEstoque).join(Material, Material.id == MovimentacaoEstoque.material_id).where(*filtros)
     total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
     linhas = (await db.execute(
-        select(MovimentacaoEstoque, Material.nome, Material.unidade, Usuario.nome)
+        select(MovimentacaoEstoque, Material.nome, Material.unidade, Usuario.nome, Obra.nome)
         .join(Material, Material.id == MovimentacaoEstoque.material_id)
         .outerjoin(Usuario, Usuario.id == MovimentacaoEstoque.usuario_id)
+        .outerjoin(Obra, Obra.id == MovimentacaoEstoque.obra_id)
         .where(*filtros)
         .order_by(MovimentacaoEstoque.criado_em.desc(), MovimentacaoEstoque.id.desc())
         .limit(tamanho).offset((pagina - 1) * tamanho)
@@ -66,8 +69,9 @@ async def listar_movimentacoes(
     itens = [MovimentacaoOut(
         id=m.id, material_id=m.material_id, material_nome=mat, unidade=un, tipo=m.tipo.value,
         quantidade=m.quantidade, saldo_apos=m.saldo_apos, requisicao_id=m.requisicao_id,
-        usuario_id=m.usuario_id, usuario_nome=usr, observacao=m.observacao, criado_em=m.criado_em,
-    ) for m, mat, un, usr in linhas]
+        usuario_id=m.usuario_id, usuario_nome=usr, obra_id=m.obra_id, obra_nome=obra, observacao=m.observacao,
+        criado_em=m.criado_em,
+    ) for m, mat, un, usr, obra in linhas]
     return MovimentacoesPagina(total=total, pagina=pagina, tamanho=tamanho, itens=itens)
 
 
@@ -119,6 +123,62 @@ async def registrar_ajuste(
     auditoria_service.registrar(db, usuario.id, "ajuste_estoque", "material", material.id, {
         "material": material.nome, "quantidade": payload.quantidade, "saldo_apos": material.quantidade_estoque,
         "observacao": payload.observacao,
+    })
+    await db.commit()
+    await db.refresh(material)
+    return material
+
+
+def _fmt(q) -> str:
+    return f"{q.normalize():f}".replace(".", ",")
+
+
+@router.post("/movimentacoes/devolucao", response_model=MaterialOut, status_code=201, tags=["estoque"])
+async def registrar_devolucao(
+    payload: DevolucaoCreate, db: AsyncSession = Depends(get_db), usuario: Usuario = Depends(gestor_ou_almoxarife),
+):
+    """Devolução de material por uma obra (RF15/RN10): AUMENTA o saldo. Não pode devolver mais do que foi atendido
+    para a obra e o material, descontadas as devoluções já feitas. Tudo na mesma transação, com o lock do material
+    (as devoluções do mesmo material se serializam, então o limite não é furado por duas ao mesmo tempo)."""
+    material = await _material_travado(db, payload.material_id)
+    obra_id = payload.obra_id
+    if payload.requisicao_id is not None:
+        req = await db.get(Requisicao, payload.requisicao_id)
+        if req is None:
+            raise HTTPException(404, "Requisição não encontrada")
+        if req.material_id != material.id:
+            raise HTTPException(422, "A requisição informada é de outro material")
+        if obra_id is not None and obra_id != req.obra_id:
+            raise HTTPException(422, "A requisição informada é de outra obra")
+        obra_id = req.obra_id
+    if obra_id is not None and await db.get(Obra, obra_id) is None:
+        raise HTTPException(404, "Obra não encontrada")
+
+    # sem obra informada o limite é o total atendido do material (todas as obras)
+    filtro_req = [Requisicao.material_id == material.id,
+                  Requisicao.status.in_((StatusRequisicao.APROVADA, StatusRequisicao.PARCIAL))]
+    filtro_dev = [MovimentacaoEstoque.material_id == material.id, MovimentacaoEstoque.tipo == TipoMovimentacao.DEVOLUCAO]
+    if obra_id is not None:
+        filtro_req.append(Requisicao.obra_id == obra_id)
+        filtro_dev.append(MovimentacaoEstoque.obra_id == obra_id)
+    atendido = (await db.execute(select(func.coalesce(func.sum(Requisicao.quantidade_atendida), 0)).where(*filtro_req))).scalar_one()
+    devolvido = (await db.execute(select(func.coalesce(func.sum(MovimentacaoEstoque.quantidade), 0)).where(*filtro_dev))).scalar_one()
+    devolvivel = atendido - devolvido
+    if payload.quantidade > devolvivel:
+        destino = "para esta obra e este material" if obra_id is not None else "deste material"
+        raise HTTPException(
+            409, f"Devolução acima do limite: só é possível devolver {_fmt(devolvivel)} {material.unidade} {destino} "
+                 f"(atendido {_fmt(atendido)}, já devolvido {_fmt(devolvido)}).")
+
+    material.quantidade_estoque += payload.quantidade
+    db.add(MovimentacaoEstoque(
+        material_id=material.id, tipo=TipoMovimentacao.DEVOLUCAO, quantidade=payload.quantidade,
+        saldo_apos=material.quantidade_estoque, usuario_id=usuario.id, obra_id=obra_id,
+        requisicao_id=payload.requisicao_id, observacao=payload.observacao,
+    ))
+    auditoria_service.registrar(db, usuario.id, "devolucao_estoque", "material", material.id, {
+        "material": material.nome, "quantidade": payload.quantidade, "saldo_apos": material.quantidade_estoque,
+        "obra_id": obra_id, "requisicao_id": payload.requisicao_id, "observacao": payload.observacao,
     })
     await db.commit()
     await db.refresh(material)

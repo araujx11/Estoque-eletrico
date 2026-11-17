@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.estoque_routes import intervalo
 from app.core.auth import exigir_perfis, get_current_user
 from app.core.database import get_db
-from app.models import Material, Obra, Perfil, Requisicao, StatusRequisicao as S, Usuario
+from app.models import Material, MovimentacaoEstoque, Obra, Perfil, Requisicao, StatusRequisicao as S, TipoMovimentacao, Usuario
 from app.schemas import ColunaOut, TabelaOut
 from app.services.csv_export import resposta_csv
 from app.services.fila_service import fila_global
@@ -105,15 +105,30 @@ async def relatorio_consumo(
     formato: Formato = "json",
     db: AsyncSession = Depends(get_db), usuario: Usuario = Depends(get_current_user),
 ):
-    """Consumo (quantidade atendida) por obra e material no período. Padrão: pedidos aprovados ou parciais."""
+    """Consumo (quantidade atendida menos as devoluções) por obra e material no período. Padrão: pedidos aprovados ou parciais."""
     obra_id = _escopo_obra(usuario, obra_id)
-    qtd = func.coalesce(func.sum(Requisicao.quantidade_atendida), 0)
+    def devolvido(por_obra: bool):
+        """Devoluções do mesmo material (e da mesma obra, quando agrupado por obra) no período/filtros."""
+        q_dev = select(func.coalesce(func.sum(MovimentacaoEstoque.quantidade), 0)).where(
+            MovimentacaoEstoque.tipo == TipoMovimentacao.DEVOLUCAO, MovimentacaoEstoque.material_id == Material.id)
+        if por_obra:
+            q_dev = q_dev.where(MovimentacaoEstoque.obra_id == Obra.id)
+        elif obra_id is not None:
+            q_dev = q_dev.where(MovimentacaoEstoque.obra_id == obra_id)
+        ini, fim = intervalo(de, ate)
+        if ini:
+            q_dev = q_dev.where(MovimentacaoEstoque.criado_em >= ini)
+        if fim:
+            q_dev = q_dev.where(MovimentacaoEstoque.criado_em < fim)
+        return q_dev.correlate(Material, Obra).scalar_subquery()
+
     sol = func.coalesce(func.sum(Requisicao.quantidade_solicitada), 0)
     n = func.count()
     j = (select().select_from(Requisicao)
          .join(Obra, Obra.id == Requisicao.obra_id).join(Material, Material.id == Requisicao.material_id))
 
     if agrupar == "obra_material":
+        qtd = func.coalesce(func.sum(Requisicao.quantidade_atendida), 0) - devolvido(True)   # consumo líquido
         q = j.add_columns(Obra.nome.label("obra"), Material.nome.label("material"), Material.unidade.label("unidade"),
                           qtd.label("quantidade_atendida"), sol.label("quantidade_solicitada"), n.label("requisicoes")
                           ).group_by(Obra.id, Obra.nome, Material.id, Material.nome, Material.unidade)
@@ -124,6 +139,7 @@ async def relatorio_consumo(
                    ColunaOut(chave="requisicoes", titulo="Requisições", tipo="inteiro")]
         mapa = {"quantidade": qtd, "requisicoes": n, "obra": Obra.nome, "material": Material.nome}
     elif agrupar == "material":
+        qtd = func.coalesce(func.sum(Requisicao.quantidade_atendida), 0) - devolvido(False)
         q = j.add_columns(Material.nome.label("material"), Material.unidade.label("unidade"),
                           qtd.label("quantidade_atendida"), sol.label("quantidade_solicitada"), n.label("requisicoes")
                           ).group_by(Material.id, Material.nome, Material.unidade)

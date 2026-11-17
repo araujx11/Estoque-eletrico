@@ -234,6 +234,22 @@ class AjusteCreate(BaseModel):
         return v
 
 
+class DevolucaoCreate(BaseModel):
+    material_id: int
+    quantidade: Decimal = Field(gt=0, **QtdIn)
+    observacao: str = Field(min_length=3, max_length=500)        # obrigatória: de onde veio / por que voltou
+    obra_id: int | None = None                                    # obra de origem (limita a devolução ao que ela recebeu)
+    requisicao_id: str | None = Field(default=None, max_length=36)
+
+    @field_validator("observacao")
+    @classmethod
+    def _observacao_nao_vazia(cls, v: str):
+        v = v.strip()
+        if len(v) < 3:
+            raise ValueError("Informe o motivo da devolução (mín. 3 caracteres)")
+        return v
+
+
 class MovimentacaoOut(BaseModel):
     id: int
     material_id: int
@@ -245,6 +261,8 @@ class MovimentacaoOut(BaseModel):
     requisicao_id: str | None
     usuario_id: int | None
     usuario_nome: str | None
+    obra_id: int | None = None
+    obra_nome: str | None = None
     observacao: str | None
     criado_em: datetime
 

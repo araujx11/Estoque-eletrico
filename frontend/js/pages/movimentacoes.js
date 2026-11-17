@@ -3,7 +3,7 @@ import {api, apiJson, atrasar, comBotao, esc, fmt, formJson, dataHora, paginador
 export const titulo = 'Movimentações';
 export const perfis = ['gestor', 'almoxarife'];
 
-const TIPOS = {entrada: '⬆️ Entrada', saida: '⬇️ Saída', ajuste: '✏️ Ajuste'};
+const TIPOS = {entrada: '⬆️ Entrada', saida: '⬇️ Saída', ajuste: '✏️ Ajuste', devolucao: '↩️ Devolução'};
 
 export async function montar(el, usuario, params) {
   let materiais = [], pagina = 1;
@@ -25,6 +25,14 @@ export async function montar(el, usuario, params) {
           <label>Motivo (obrigatório)<input name="observacao" required minlength="3" maxlength="500" placeholder="Ex.: contagem do inventário"></label>
           <button class="full" type="submit">Registrar ajuste</button>
         </form></section>
+      <section id="secDevolucao"><h2>Registrar devolução</h2>
+        <form id="fDevolucao">
+          <label class="full">Material<select name="material_id" class="selMat" required></select></label>
+          <label>Obra de origem<select name="obra_id" id="selObraDev"><option value="">Qualquer obra</option></select></label>
+          <label>Quantidade<input name="quantidade" type="number" min="0.001" step="any" required></label>
+          <label class="full">Motivo / origem (obrigatório)<input name="observacao" required minlength="3" maxlength="500" placeholder="Ex.: sobra de material da obra"></label>
+          <button class="full" type="submit">Registrar devolução</button>
+        </form></section>
     </div>
     <section><h2>Histórico</h2>
       <div class="filtros">
@@ -44,7 +52,7 @@ export async function montar(el, usuario, params) {
         r.itens.map(m => `<tr><td>${dataHora(m.criado_em)}</td><td>${esc(m.material_nome)}</td><td>${TIPOS[m.tipo]}</td>
           <td>${m.tipo === 'saida' ? '−' : (m.quantidade > 0 ? '+' : '')}${fmt(m.quantidade)} ${esc(m.unidade)}</td>
           <td>${fmt(m.saldo_apos)} ${esc(m.unidade)}</td><td>${esc(m.usuario_nome ?? 'sistema')}</td>
-          <td class="desc">${esc(m.observacao ?? (m.requisicao_id ? 'Requisição #' + m.requisicao_id.slice(0, 6) : '—'))}</td></tr>`).join('')
+          <td class="desc">${m.obra_nome ? 'Obra: ' + esc(m.obra_nome) + ' · ' : ''}${esc(m.observacao ?? (m.requisicao_id ? 'Requisição #' + m.requisicao_id.slice(0, 6) : '—'))}</td></tr>`).join('')
       : '<tr><td class="empty">Nenhuma movimentação encontrada.</td></tr>';
     paginador($('#pag', el), {pagina: r.pagina, tamanho: r.tamanho, total: r.total}, p => { pagina = p; carregar(); });
   }
@@ -53,12 +61,14 @@ export async function montar(el, usuario, params) {
   for (const id of ['#fMaterial', '#fTipo', '#fDe', '#fAte']) $(id, el).addEventListener('change', recarregarDoZero);
   $('#fBusca', el).addEventListener('input', atrasar(recarregarDoZero));
 
-  for (const [idForm, caminho, ok] of [['#fEntrada', '/movimentacoes/entrada', 'Entrada registrada'], ['#fAjuste', '/movimentacoes/ajuste', 'Ajuste registrado']]) {
+  for (const [idForm, caminho, ok] of [['#fEntrada', '/movimentacoes/entrada', 'Entrada registrada'], ['#fAjuste', '/movimentacoes/ajuste', 'Ajuste registrado'], ['#fDevolucao', '/movimentacoes/devolucao', 'Devolução registrada']]) {
     $(idForm, el).addEventListener('submit', async e => {
       e.preventDefault();
       await comBotao($('[type=submit]', e.target), async () => {
         try {
-          const m = await apiJson(caminho, 'POST', formJson(e.target));
+          const dados = formJson(e.target);
+          if (dados.obra_id === '' || dados.obra_id === undefined) delete dados.obra_id;
+          const m = await apiJson(caminho, 'POST', dados);
           toast(`${ok}. Saldo de ${m.nome}: ${fmt(m.quantidade_estoque)} ${m.unidade}`, 'ok');
           e.target.reset(); selecionarMaterial(m.id);
           materiais = await api('/materiais'); recarregarDoZero();
@@ -69,6 +79,8 @@ export async function montar(el, usuario, params) {
 
   const selecionarMaterial = id => el.querySelectorAll('.selMat').forEach(s => { if (id) s.value = id; });
   materiais = await api('/materiais');
+  const obras = await api('/obras');
+  $('#selObraDev', el).insertAdjacentHTML('beforeend', obras.map(o => `<option value="${o.id}">${esc(o.nome)} — ${esc(o.cidade)}</option>`).join(''));
   const opcoes = materiais.map(m => `<option value="${m.id}">${esc(m.nome)} (${fmt(m.quantidade_estoque)} ${esc(m.unidade)})</option>`).join('');
   el.querySelectorAll('.selMat').forEach(s => s.innerHTML = opcoes);
   $('#fMaterial', el).insertAdjacentHTML('beforeend', materiais.map(m => `<option value="${m.id}">${esc(m.nome)}</option>`).join(''));

@@ -16,7 +16,7 @@ e o lugar onde cada uma é garantida (código e testes).
 | RN07 | Operações simultâneas respeitam mecanismos de sincronização | Implementada e **atualizada (RN15)** | `SELECT ... FOR UPDATE`; a ordem de atendimento passou a ser garantida (Sprint 05) |
 | RN08 | Cada obra possui identificação única | Implementada | Chave primária |
 | RN09 | Cada material possui identificação única | Implementada | Chave primária e nome único |
-| RN10 | Uma devolução atualiza a quantidade disponível | **Não implementada** | Não há tipo de movimentação de devolução; prevista para a próxima etapa |
+| RN10 | Uma devolução atualiza a quantidade disponível | **Implementada (RN21)** | Tipo de movimentação `devolucao` e `POST /movimentacoes/devolucao` |
 | RN11 | Materiais abaixo do estoque mínimo são identificados | Implementada | `estoque_critico`; alertas no dashboard e relatório |
 | RN12 | Operações críticas são registradas no histórico | Implementada | `movimentacoes_estoque` e `auditoria` |
 | RN13 | Não aprovar solicitações que excedam o estoque após as regras de concorrência | Implementada | Idem RN05, sob lock; teste de estresse com 200 requisições |
@@ -79,6 +79,16 @@ crescente entre as tentativas, até `ERRO_MAX_TENTATIVAS` (padrão 3). Depois di
 **Regra.** Entradas, ajustes, devoluções e **saídas** guardam quem foi o responsável. Na saída gerada pelo processamento de uma requisição, o responsável é o **solicitante** da
 requisição; se ela não tem solicitante (registro anterior à autenticação), fica vazio, sem erro (a tela mostra "sistema"). A migração `0004` preenche as saídas já existentes.
 **Testes.** `tests/test_responsavel_saidas.py`.
+
+### RN21 (RN10 e RF15 implementadas) — Devolução de material
+**Regra.** Gestor e almoxarife (o engenheiro não) registram a devolução de material: o saldo **aumenta**, e a movimentação guarda o saldo depois, o responsável, o motivo (**obrigatório**, mín. 3 caracteres) e,
+opcionalmente, a obra e a requisição de origem. **Não se devolve mais do que foi atendido** para a obra e o material (soma de `quantidade_atendida` das requisições aprovadas ou parciais, menos as devoluções já feitas);
+passando disso, 409 com mensagem em português. Sem obra informada, o limite é o total atendido do material. A requisição informada precisa ser do mesmo material (e da obra, se informada); a obra de origem vem dela.
+O relatório de consumo mostra a quantidade atendida **menos as devoluções** (por obra e material, no período).
+**Implementação.** `POST /movimentacoes/devolucao`: trava o material (`FOR UPDATE`, o mesmo lock dos workers), confere o limite, soma ao estoque, grava a movimentação e a auditoria (`devolucao_estoque`)
+na mesma transação. Como o limite é conferido sob o lock do material, duas devoluções simultâneas não furam o limite. O livro-razão passa a ser: saldo inicial + entradas + ajustes + devoluções − saídas = estoque atual.
+**Limitações.** O limite é conferido por obra e material (não por requisição); devoluções sem obra só entram na conta do limite geral do material. O "Top materiais" do dashboard ainda não desconta devoluções.
+**Testes.** `tests/test_devolucoes.py` (15: válida, acima do limite, parcial, por obra, inexistentes, validação, permissões, relatório e concorrência com pedidos).
 
 ## 3. Regras que já existiam no código e não estavam no planejamento
 

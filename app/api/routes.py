@@ -167,6 +167,9 @@ async def _remover(db: AsyncSession, entidade, coluna_req, forcar: bool, usuario
         ids_req = select(Requisicao.id).where(coluna_req == entidade.id)
         await db.execute(update(MovimentacaoEstoque)
                          .where(MovimentacaoEstoque.requisicao_id.in_(ids_req)).values(requisicao_id=None))
+    if not isinstance(entidade, Material):
+        # devoluções feitas por esta obra ficam no livro-razão do material, só perdem o vínculo com a obra
+        await db.execute(update(MovimentacaoEstoque).where(MovimentacaoEstoque.obra_id == entidade.id).values(obra_id=None))
     if historico:
         await db.execute(delete(Requisicao).where(coluna_req == entidade.id))
     detalhes = {"nome": entidade.nome, "requisicoes_removidas": historico}

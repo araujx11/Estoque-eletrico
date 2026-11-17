@@ -38,6 +38,7 @@ class TipoMovimentacao(str, enum.Enum):
     ENTRADA = "entrada"    # recebimento/compra: soma ao estoque
     SAIDA = "saida"        # débito feito pelo processamento de uma requisição
     AJUSTE = "ajuste"      # correção de inventário (quantidade COM SINAL: + ou -)
+    DEVOLUCAO = "devolucao"  # sobra devolvida pela obra: soma ao estoque (RF15 / RN10)
 
 
 # Quantidades: NUMERIC(14,3) exato (achado 8). Float acumulava erro (0,1 somado 10 mil vezes != 1000).
@@ -140,8 +141,8 @@ class Requisicao(Base):
 
 class MovimentacaoEstoque(Base):
     """
-    Livro-razão do estoque. Invariante: saldo inicial + entradas + ajustes - saídas == estoque atual.
-    `quantidade` é positiva em ENTRADA/SAIDA e tem sinal em AJUSTE; `saldo_apos` é o estoque logo depois.
+    Livro-razão do estoque. Invariante: saldo inicial + entradas + ajustes + devoluções - saídas == estoque atual.
+    `quantidade` é positiva em ENTRADA/SAIDA/DEVOLUCAO e tem sinal em AJUSTE; `saldo_apos` é o estoque logo depois.
     """
     __tablename__ = "movimentacoes_estoque"
     __table_args__ = (Index("ix_movimentacoes_material_criado", "material_id", "criado_em"),)
@@ -155,6 +156,8 @@ class MovimentacaoEstoque(Base):
     saldo_apos: Mapped[Decimal] = mapped_column(QTD)
     requisicao_id: Mapped[str | None] = mapped_column(ForeignKey("requisicoes.id"), nullable=True, index=True)
     usuario_id: Mapped[int | None] = mapped_column(ForeignKey("usuarios.id"), nullable=True)
+    # obra de origem (usada nas devoluções; limite = o que foi atendido para aquela obra e material)
+    obra_id: Mapped[int | None] = mapped_column(ForeignKey("obras.id"), nullable=True, index=True)
     observacao: Mapped[str | None] = mapped_column(Text, nullable=True)
     # preenchido pelo app no flush (já dentro da seção crítica, com o lock do material): a ordem de
     # criado_em/id das movimentações de um material é a ordem em que o lock foi obtido
