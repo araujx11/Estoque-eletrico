@@ -1,5 +1,7 @@
 """Registro de auditoria. As funções só adicionam à sessão: quem chama faz o commit, assim o log
 entra na MESMA transação da ação (ou ambos acontecem, ou nenhum)."""
+from decimal import Decimal
+
 from app.models import LogAuditoria
 
 _SENSIVEIS = {"senha", "senha_hash", "nova_senha", "password", "token", "access_token", "authorization"}
@@ -11,6 +13,8 @@ def _limpar(valor):
         return {k: _limpar(v) for k, v in valor.items() if str(k).lower() not in _SENSIVEIS}
     if isinstance(valor, (list, tuple)):
         return [_limpar(v) for v in valor]
+    if isinstance(valor, Decimal):
+        return float(valor)          # a coluna é JSON: Decimal não serializa (3 casas cabem sem perda num double)
     return valor
 
 

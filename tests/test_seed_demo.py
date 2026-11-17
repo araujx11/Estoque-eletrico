@@ -1,5 +1,6 @@
 """O seed de demonstração roda no banco de TESTE (nunca no de desenvolvimento) e precisa gerar dados coerentes."""
 from argparse import Namespace
+from decimal import Decimal
 
 from sqlalchemy import func, select
 
@@ -30,7 +31,7 @@ async def test_seed_gera_dados_coerentes_e_e_idempotente(client, SessionTeste):
     for m in movs:
         por_material.setdefault(m.material_id, []).append(m)
     for mat in materiais:
-        saldo = 0.0
+        saldo = Decimal(0)
         for m in por_material[mat.id]:
             saldo = saldo - m.quantidade if m.tipo == T.SAIDA else saldo + m.quantidade
             assert abs(m.saldo_apos - saldo) < 1e-6, f"{mat.nome}: movimentação {m.id}"

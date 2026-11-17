@@ -7,6 +7,8 @@ Mensagens de erro em português.
 * Textos padrão do framework (401 «Not authenticated», 404 «Not Found»...): traduzidos; os `detail` já escritos em português
   pelas rotas passam sem alteração.
 """
+from decimal import Decimal
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -39,6 +41,8 @@ def _lista(valor) -> str:
 
 def _num(v):
     """0.0 -> 0 (o pydantic devolve o limite de campos decimais como float)."""
+    if isinstance(v, Decimal):
+        return int(v) if v == v.to_integral_value() else v.normalize()
     return int(v) if isinstance(v, float) and v.is_integer() else v
 
 
@@ -72,6 +76,12 @@ def traduzir(erro: dict) -> str:
         return f"deve ser menor ou igual a {_num(ctx.get('le'))}"
     if tipo == "less_than":
         return f"deve ser menor que {_num(ctx.get('lt'))}"
+    if tipo == "decimal_max_places":
+        return f"deve ter no máximo {ctx.get('decimal_places')} casa(s) decimal(is)"
+    if tipo in ("decimal_max_digits", "decimal_whole_digits"):
+        return "é grande demais (máximo de 11 dígitos antes da vírgula)"
+    if tipo == "finite_number":
+        return "deve ser um número válido"
     if tipo in ("float_parsing", "float_type", "int_parsing", "int_type", "int_from_float", "decimal_parsing", "decimal_type"):
         return "deve ser um número"
     if tipo in ("enum", "literal_error"):

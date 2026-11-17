@@ -1,9 +1,18 @@
 import enum
 from datetime import datetime, timezone
+from decimal import Decimal
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_validator
 
 from app.models import Perfil, StatusRequisicao
+
+
+# Quantidade exata (NUMERIC 14,3 no banco). No JSON sai como NÚMERO (não texto): com no máximo 14 dígitos
+# significativos o double não perde nada, e o frontend continua recebendo números.
+Qtd = Annotated[Decimal, PlainSerializer(lambda v: float(v), return_type=float, when_used="json")]
+# entrada: até 3 casas e 11 inteiros (cabe em NUMERIC(14,3)); acima disso a API recusa em vez de arredondar
+QtdIn = dict(max_digits=14, decimal_places=3)
 
 
 class Unidade(str, enum.Enum):
@@ -35,8 +44,8 @@ UNIDADES_DESCRICAO = {
 class MaterialCreate(BaseModel):
     nome: str = Field(min_length=1, max_length=120)
     unidade: Unidade = Unidade.UNIDADE
-    quantidade_estoque: float = Field(ge=0)
-    estoque_critico: float = Field(default=0, ge=0)
+    quantidade_estoque: Decimal = Field(ge=0, **QtdIn)
+    estoque_critico: Decimal = Field(default=Decimal(0), ge=0, **QtdIn)
 
 
 class MaterialOut(BaseModel):
@@ -44,8 +53,8 @@ class MaterialOut(BaseModel):
     id: int
     nome: str
     unidade: str
-    quantidade_estoque: float
-    estoque_critico: float
+    quantidade_estoque: Qtd
+    estoque_critico: Qtd
 
 
 class ObraCreate(BaseModel):
@@ -87,12 +96,12 @@ class AndamentoUpdate(BaseModel):
 class RequisicaoCreate(BaseModel):
     obra_id: int
     material_id: int
-    quantidade_solicitada: float = Field(gt=0)
+    quantidade_solicitada: Decimal = Field(gt=0, **QtdIn)
 
 
 class ItemPedido(BaseModel):
     material_id: int
-    quantidade_solicitada: float = Field(gt=0)
+    quantidade_solicitada: Decimal = Field(gt=0, **QtdIn)
 
 
 class PedidoCreate(BaseModel):
@@ -114,13 +123,15 @@ class RequisicaoOut(BaseModel):
     obra_id: int
     material_id: int
     pedido_id: str | None = None
-    quantidade_solicitada: float
-    quantidade_atendida: float
+    quantidade_solicitada: Qtd
+    quantidade_atendida: Qtd
     status: StatusRequisicao
     criado_em: datetime
     processado_em: datetime | None
     worker_id: str | None
     solicitante_id: int | None = None
+    tentativas: int = 0
+    ultimo_erro: str | None = None
 
 
 class ResumoOut(BaseModel):
@@ -198,18 +209,18 @@ class TokenOut(BaseModel):
 
 class EntradaCreate(BaseModel):
     material_id: int
-    quantidade: float = Field(gt=0)
+    quantidade: Decimal = Field(gt=0, **QtdIn)
     observacao: str | None = Field(default=None, max_length=500)
 
 
 class AjusteCreate(BaseModel):
     material_id: int
-    quantidade: float  # delta com sinal: positivo soma, negativo subtrai
+    quantidade: Decimal = Field(**QtdIn)  # delta com sinal: positivo soma, negativo subtrai
     observacao: str = Field(min_length=3, max_length=500)  # obrigatória em ajustes
 
     @field_validator("quantidade")
     @classmethod
-    def _nao_zero(cls, v: float):
+    def _nao_zero(cls, v: Decimal):
         if v == 0:
             raise ValueError("O ajuste não pode ser zero")
         return v
@@ -229,8 +240,8 @@ class MovimentacaoOut(BaseModel):
     material_nome: str
     unidade: str
     tipo: str
-    quantidade: float
-    saldo_apos: float
+    quantidade: Qtd
+    saldo_apos: Qtd
     requisicao_id: str | None
     usuario_id: int | None
     usuario_nome: str | None
@@ -277,9 +288,9 @@ class LinhaSimulacao(BaseModel):
     nivel_prioridade: int
     prazo_entrega: datetime | None
     criado_em: datetime
-    quantidade_pedida: float
-    quantidade_atendida: float
-    quantidade_pendente: float
+    quantidade_pedida: Qtd
+    quantidade_atendida: Qtd
+    quantidade_pendente: Qtd
     status: str                        # completa | parcial | sem_atendimento
     icone: str
     rotulo: str
@@ -289,11 +300,11 @@ class MaterialDiagnostico(BaseModel):
     material_id: int
     nome: str
     unidade: str
-    estoque_atual: float
-    estoque_critico: float
-    demanda_total: float
-    deficit: float
-    estoque_restante: float
+    estoque_atual: Qtd
+    estoque_critico: Qtd
+    demanda_total: Qtd
+    deficit: Qtd
+    estoque_restante: Qtd
     semaforo: str                      # verde | amarelo | vermelho
     icone: str
     mensagem: str
@@ -306,7 +317,23 @@ class DeficitHistorico(BaseModel):
     unidade: str
     requisicoes_parciais: int
     requisicoes_negadas: int
-    deficit_acumulado: float
+    deficit_acumulado: Qtd
+
+
+class RequisicaoComErro(BaseModel):
+    """Requisição que falhou no processamento (ERRO). `definitivo`: esgotou as tentativas e não será mais reprocessada."""
+    requisicao_id: str
+    obra_id: int
+    obra_nome: str
+    material_id: int
+    material_nome: str
+    unidade: str
+    quantidade_solicitada: Qtd
+    tentativas: int
+    max_tentativas: int
+    definitivo: bool
+    ultimo_erro: str | None
+    proxima_tentativa_em: datetime | None
 
 
 class DiagnosticoOut(BaseModel):
@@ -314,12 +341,13 @@ class DiagnosticoOut(BaseModel):
     simulacao_hipotetica: bool
     materiais: list[MaterialDiagnostico]
     deficit_historico: list[DeficitHistorico]
+    erros: list[RequisicaoComErro] = []
 
 
 class ItemHipotetico(BaseModel):
     obra_id: int
     material_id: int
-    quantidade: float = Field(gt=0)
+    quantidade: Decimal = Field(gt=0, **QtdIn)
 
 
 class SimulacaoIn(BaseModel):

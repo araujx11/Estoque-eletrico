@@ -107,8 +107,8 @@ async def relatorio_consumo(
 ):
     """Consumo (quantidade atendida) por obra e material no período. Padrão: pedidos aprovados ou parciais."""
     obra_id = _escopo_obra(usuario, obra_id)
-    qtd = func.coalesce(func.sum(Requisicao.quantidade_atendida), 0.0)
-    sol = func.coalesce(func.sum(Requisicao.quantidade_solicitada), 0.0)
+    qtd = func.coalesce(func.sum(Requisicao.quantidade_atendida), 0)
+    sol = func.coalesce(func.sum(Requisicao.quantidade_solicitada), 0)
     n = func.count()
     j = (select().select_from(Requisicao)
          .join(Obra, Obra.id == Requisicao.obra_id).join(Material, Material.id == Requisicao.material_id))
@@ -196,7 +196,7 @@ async def relatorio_estoque_critico(
 ):
     """Materiais no nível crítico ou abaixo, com quanto falta para atingir o crítico."""
     pct = case((Material.estoque_critico > 0, Material.quantidade_estoque / Material.estoque_critico * 100), else_=None)
-    falta = func.greatest(Material.estoque_critico - Material.quantidade_estoque, 0.0)
+    falta = func.greatest(Material.estoque_critico - Material.quantidade_estoque, 0)
     situacao = case((Material.quantidade_estoque <= 0, "Zerado"),
                     (Material.quantidade_estoque < Material.estoque_critico, "Abaixo do crítico"),
                     else_="No limite do crítico")
@@ -246,14 +246,14 @@ async def relatorio_taxa_atendimento(
     q = _filtrar(q, de, ate, obra_id, material_id)
 
     r = (select(func.count(), cont(S.APROVADA), cont(S.PARCIAL), cont(S.NEGADA),
-                func.coalesce(func.sum(Requisicao.quantidade_solicitada), 0.0),
-                func.coalesce(func.sum(Requisicao.quantidade_atendida), 0.0))
+                func.coalesce(func.sum(Requisicao.quantidade_solicitada), 0),
+                func.coalesce(func.sum(Requisicao.quantidade_atendida), 0))
          .where(Requisicao.status.in_(RESOLVIDAS)))
     total, ap, pa, ne, s_, a_ = (await db.execute(_filtrar(r, de, ate, obra_id, material_id))).one()
     pc = lambda x: round(x * 100.0 / total, 1) if total else None  # noqa: E731
     resumo = {"total_resolvidas": total, "aprovadas": ap, "parciais": pa, "negadas": ne,
               "pct_aprovadas": pc(ap), "pct_parciais": pc(pa), "pct_negadas": pc(ne),
-              "taxa_atendimento_quantidade_pct": round(a_ * 100.0 / s_, 1) if s_ else None}
+              "taxa_atendimento_quantidade_pct": round(float(a_) * 100.0 / float(s_), 1) if s_ else None}
     colunas = [ColunaOut(chave="material", titulo="Material"), ColunaOut(chave="unidade", titulo="Unidade"),
                ColunaOut(chave="requisicoes", titulo="Requisições", tipo="inteiro"),
                ColunaOut(chave="aprovadas", titulo="Aprovadas", tipo="inteiro"),
@@ -346,7 +346,7 @@ async def dashboard_completo(
         por_dia = [{"data": d.isoformat(), "total": n} for d, n in sorted(contagem.items())]
 
     # top 5 materiais consumidos e consumo por obra
-    qtd = func.coalesce(func.sum(Requisicao.quantidade_atendida), 0.0)
+    qtd = func.coalesce(func.sum(Requisicao.quantidade_atendida), 0)
     q_top = (select(Material.nome, Material.unidade, qtd).select_from(Requisicao)
              .join(Material, Material.id == Requisicao.material_id)
              .where(Requisicao.status.in_((S.APROVADA, S.PARCIAL))).group_by(Material.id, Material.nome, Material.unidade)
@@ -359,8 +359,8 @@ async def dashboard_completo(
     por_obra = [{"obra": n, "itens_atendidos": c} for n, c in (await db.execute(_filtrar(q_obra, de, None, obra_id))).all()]
 
     # alertas de estoque crítico
-    falta = func.greatest(Material.estoque_critico - Material.quantidade_estoque, 0.0)
-    alertas = [{"material_id": i, "nome": n, "unidade": u, "estoque": e, "critico": c, "falta_para_critico": float(f)}
+    falta = func.greatest(Material.estoque_critico - Material.quantidade_estoque, 0)
+    alertas = [{"material_id": i, "nome": n, "unidade": u, "estoque": float(e), "critico": float(c), "falta_para_critico": float(f)}
                for i, n, u, e, c, f in (await db.execute(
                    select(Material.id, Material.nome, Material.unidade, Material.quantidade_estoque,
                           Material.estoque_critico, falta)

@@ -128,7 +128,7 @@ async def editar_material(
     material.unidade = payload.unidade.value
     material.quantidade_estoque = payload.quantidade_estoque
     material.estoque_critico = payload.estoque_critico
-    if abs(delta) > 1e-9:
+    if delta != 0:
         db.add(MovimentacaoEstoque(
             material_id=material.id, tipo=TipoMovimentacao.AJUSTE, quantidade=delta,
             saldo_apos=material.quantidade_estoque, usuario_id=usuario.id,

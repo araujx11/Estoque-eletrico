@@ -17,8 +17,6 @@ router = APIRouter()
 somente_gestor = exigir_perfis(Perfil.GESTOR)
 gestor_ou_almoxarife = exigir_perfis(Perfil.GESTOR, Perfil.ALMOXARIFE)
 
-EPS = 1e-9
-
 
 def intervalo(de: date | None, ate: date | None):
     """Datas inclusivas -> [inicio, fim) em datetime naive."""
@@ -110,10 +108,10 @@ async def registrar_ajuste(
     """Ajuste de inventário (quantidade com sinal). Nunca deixa o estoque negativo."""
     material = await _material_travado(db, payload.material_id)
     novo_saldo = material.quantidade_estoque + payload.quantidade
-    if novo_saldo < -EPS:
+    if novo_saldo < 0:
         raise HTTPException(
-            409, f"O ajuste deixaria o estoque negativo (atual: {material.quantidade_estoque:g} {material.unidade}).")
-    material.quantidade_estoque = max(0.0, novo_saldo)
+            409, f"O ajuste deixaria o estoque negativo (atual: {material.quantidade_estoque.normalize():f} {material.unidade}).")
+    material.quantidade_estoque = novo_saldo
     db.add(MovimentacaoEstoque(
         material_id=material.id, tipo=TipoMovimentacao.AJUSTE, quantidade=payload.quantidade,
         saldo_apos=material.quantidade_estoque, usuario_id=usuario.id, observacao=payload.observacao,

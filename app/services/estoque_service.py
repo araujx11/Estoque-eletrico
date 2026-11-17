@@ -24,7 +24,7 @@ from typing import Callable
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Material, MovimentacaoEstoque, Requisicao, StatusRequisicao, TipoMovimentacao
+from app.models import ZERO, Material, MovimentacaoEstoque, Requisicao, StatusRequisicao, TipoMovimentacao
 
 logger = logging.getLogger("estoque_service")
 
@@ -87,14 +87,14 @@ async def _alocar(db: AsyncSession, requisicao: Requisicao, worker_id: str, ao_t
 
     if disponivel <= 0:
         requisicao.status = StatusRequisicao.NEGADA
-        requisicao.quantidade_atendida = 0
+        requisicao.quantidade_atendida = ZERO
     elif disponivel >= solicitado:
         material.quantidade_estoque -= solicitado
         requisicao.quantidade_atendida = solicitado
         requisicao.status = StatusRequisicao.APROVADA
     else:
         # déficit: entrega o que sobrou e marca como parcial
-        material.quantidade_estoque = 0
+        material.quantidade_estoque = ZERO
         requisicao.quantidade_atendida = disponivel
         requisicao.status = StatusRequisicao.PARCIAL
 

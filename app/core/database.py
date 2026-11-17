@@ -4,6 +4,7 @@ Configuração da conexão assíncrona com o PostgreSQL usando SQLAlchemy.
 A engine assíncrona (asyncpg) é o que permite que múltiplas requisições
 concorrentes conversem com o banco sem bloquear o event loop do FastAPI.
 """
+import logging
 import os
 
 from dotenv import load_dotenv
@@ -48,9 +49,25 @@ async def init_models():
                 "ALTER TABLE obras ADD COLUMN IF NOT EXISTS finalizada_em TIMESTAMP",
                 "ALTER TABLE requisicoes ADD COLUMN IF NOT EXISTS pedido_id VARCHAR(36)",
                 "ALTER TABLE requisicoes ADD COLUMN IF NOT EXISTS solicitante_id INTEGER REFERENCES usuarios(id)",
+                "ALTER TABLE requisicoes ADD COLUMN IF NOT EXISTS reivindicada_por VARCHAR(60)",
+                "ALTER TABLE requisicoes ADD COLUMN IF NOT EXISTS reivindicada_em TIMESTAMP",
+                "ALTER TABLE requisicoes ADD COLUMN IF NOT EXISTS tentativas INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE requisicoes ADD COLUMN IF NOT EXISTS ultimo_erro TEXT",
+                "ALTER TABLE requisicoes ADD COLUMN IF NOT EXISTS proxima_tentativa_em TIMESTAMP",
                 "CREATE INDEX IF NOT EXISTS ix_requisicoes_obra_id ON requisicoes (obra_id)",
                 "CREATE INDEX IF NOT EXISTS ix_requisicoes_material_id ON requisicoes (material_id)",
                 "CREATE INDEX IF NOT EXISTS ix_requisicoes_status ON requisicoes (status)",
                 "CREATE INDEX IF NOT EXISTS ix_requisicoes_criado_em ON requisicoes (criado_em)",
             ):
                 await conn.exec_driver_sql(ddl)
+
+            # banco criado antes do achado 8: as quantidades ainda são FLOAT. Quem converte é o Alembic (com a API parada)
+            antigas = (await conn.exec_driver_sql(
+                "SELECT count(*) FROM information_schema.columns WHERE data_type = 'double precision' AND "
+                "(table_name, column_name) IN (('materiais','quantidade_estoque'), ('materiais','estoque_critico'), "
+                "('requisicoes','quantidade_solicitada'), ('requisicoes','quantidade_atendida'), "
+                "('movimentacoes_estoque','quantidade'), ('movimentacoes_estoque','saldo_apos'))"
+            )).scalar()
+            if antigas:
+                logging.getLogger("database").warning(
+                    "%s coluna(s) de quantidade ainda são FLOAT: rode `python -m alembic upgrade head` (veja o README).", antigas)

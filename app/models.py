@@ -11,8 +11,9 @@ LogAuditoria -> registro de ações relevantes (quem fez o quê e quando)
 import enum
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
 
-from sqlalchemy import JSON, String, Integer, Float, ForeignKey, DateTime, Enum, Index, Text, func, true
+from sqlalchemy import JSON, String, Integer, ForeignKey, DateTime, Enum, Index, Numeric, Text, func, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -37,6 +38,12 @@ class TipoMovimentacao(str, enum.Enum):
     ENTRADA = "entrada"    # recebimento/compra: soma ao estoque
     SAIDA = "saida"        # débito feito pelo processamento de uma requisição
     AJUSTE = "ajuste"      # correção de inventário (quantidade COM SINAL: + ou -)
+
+
+# Quantidades: NUMERIC(14,3) exato (achado 8). Float acumulava erro (0,1 somado 10 mil vezes != 1000).
+# 14 dígitos no total, 3 decimais: cabe até 99.999.999.999,999 e ainda é representável sem perda em JSON/double.
+QTD = Numeric(14, 3)
+ZERO = Decimal("0")
 
 
 def _agora() -> datetime:
@@ -70,8 +77,8 @@ class Material(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     nome: Mapped[str] = mapped_column(String(120), unique=True, index=True)
     unidade: Mapped[str] = mapped_column(String(10))  # "m", "un", "cx"...
-    quantidade_estoque: Mapped[float] = mapped_column(Float, default=0)
-    estoque_critico: Mapped[float] = mapped_column(Float, default=0)  # abaixo disso = alerta
+    quantidade_estoque: Mapped[Decimal] = mapped_column(QTD, default=ZERO)
+    estoque_critico: Mapped[Decimal] = mapped_column(QTD, default=ZERO)  # abaixo disso = alerta
 
     requisicoes: Mapped[list["Requisicao"]] = relationship(back_populates="material")
 
@@ -108,8 +115,8 @@ class Requisicao(Base):
     # quem fez o pedido (auditoria); None em registros anteriores à autenticação
     solicitante_id: Mapped[int | None] = mapped_column(ForeignKey("usuarios.id"), nullable=True)
 
-    quantidade_solicitada: Mapped[float] = mapped_column(Float)
-    quantidade_atendida: Mapped[float] = mapped_column(Float, default=0)
+    quantidade_solicitada: Mapped[Decimal] = mapped_column(QTD)
+    quantidade_atendida: Mapped[Decimal] = mapped_column(QTD, default=ZERO)
 
     status: Mapped[StatusRequisicao] = mapped_column(
         Enum(StatusRequisicao), default=StatusRequisicao.PENDENTE, index=True
@@ -118,6 +125,14 @@ class Requisicao(Base):
     criado_em: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
     processado_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     worker_id: Mapped[str | None] = mapped_column(String(20), nullable=True)  # p/ debug/demo
+
+    # fila com vários processos (achado 2): quem reivindicou a requisição e quando (prazo/lease: ver fila_service)
+    reivindicada_por: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    reivindicada_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # reprocessamento de erros (achado 3): falhas já ocorridas, último erro e quando tentar de novo
+    tentativas: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    ultimo_erro: Mapped[str | None] = mapped_column(Text, nullable=True)
+    proxima_tentativa_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     obra: Mapped["Obra"] = relationship(back_populates="requisicoes")
     material: Mapped["Material"] = relationship(back_populates="requisicoes")
@@ -136,8 +151,8 @@ class MovimentacaoEstoque(Base):
     tipo: Mapped[TipoMovimentacao] = mapped_column(
         Enum(TipoMovimentacao, native_enum=False, length=10, values_callable=lambda e: [m.value for m in e])
     )
-    quantidade: Mapped[float] = mapped_column(Float)
-    saldo_apos: Mapped[float] = mapped_column(Float)
+    quantidade: Mapped[Decimal] = mapped_column(QTD)
+    saldo_apos: Mapped[Decimal] = mapped_column(QTD)
     requisicao_id: Mapped[str | None] = mapped_column(ForeignKey("requisicoes.id"), nullable=True, index=True)
     usuario_id: Mapped[int | None] = mapped_column(ForeignKey("usuarios.id"), nullable=True)
     observacao: Mapped[str | None] = mapped_column(Text, nullable=True)

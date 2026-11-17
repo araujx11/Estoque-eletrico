@@ -2,6 +2,7 @@
 import csv
 import io
 from datetime import date, datetime
+from decimal import Decimal
 
 from fastapi.responses import Response
 
@@ -17,7 +18,7 @@ def _celula(valor, tipo: str) -> str:
         return valor.strftime("%d/%m/%Y" if tipo == "data" else "%d/%m/%Y %H:%M")
     if isinstance(valor, date):
         return valor.strftime("%d/%m/%Y")
-    if isinstance(valor, float):
+    if isinstance(valor, (float, Decimal)):
         return f"{valor:.3f}".rstrip("0").rstrip(".").replace(".", ",") if tipo != "percentual" else f"{valor:.1f}".replace(".", ",")
     texto = str(valor)
     # evita "injeção de fórmula" ao abrir no Excel (nomes vêm de usuários)

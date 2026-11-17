@@ -109,7 +109,7 @@ async def preparar(n_req: int, n_mat: int, semente: int) -> Carga:
             m.quantidade_estoque = float(max(1, round(demanda[m.id] * FRACAO_ESTOQUE)))
         db.add_all(r for r, _ in reqs)
         await db.commit()
-        estoque = {m.id: m.quantidade_estoque for m in materiais}
+        estoque = {m.id: float(m.quantidade_estoque) for m in materiais}     # NUMERIC volta como Decimal; o relatório trabalha em float
         itens = [(r.id, o.parada_por_falta_material, o.nivel_prioridade, o.prazo_entrega, r.criado_em, r.material_id)
                  for r, o in reqs]
     return Carga(itens, estoque)
@@ -252,7 +252,7 @@ async def coletar(carga: Carga, t0: datetime, tempo: float, extras: dict, **rotu
     async with AsyncSessionLocal() as db:
         reqs = (await db.execute(select(
             Requisicao.status, Requisicao.quantidade_atendida, Requisicao.processado_em))).all()
-        estoques = {i: q for i, q in (await db.execute(select(Material.id, Material.quantidade_estoque))).all()}
+        estoques = {i: float(q) for i, q in (await db.execute(select(Material.id, Material.quantidade_estoque))).all()}
         atendido_mat = dict((await db.execute(text(
             "SELECT material_id, coalesce(sum(quantidade_atendida),0) FROM requisicoes GROUP BY material_id"))).all())
 
