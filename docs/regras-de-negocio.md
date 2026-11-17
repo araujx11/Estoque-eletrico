@@ -48,6 +48,33 @@ A resposta de erro nunca devolve o valor que o usuário enviou (por exemplo, uma
 **Implementação.** `app/core/erros.py` (tratadores de validação e de erros HTTP padrão) e uso do rótulo do campo no frontend (`frontend/js/api.js`).
 **Testes.** `tests/test_mensagens_erro.py` (34 testes).
 
+## 2-B. Regras novas (achados 2, 3 e 8)
+
+### RN17 (nova) — Quantidades são exatas (3 casas decimais)
+**Regra.** Toda quantidade (estoque, estoque crítico, solicitada, atendida, movimentação, saldo) é um decimal exato com **até 3 casas** e até 11 dígitos
+inteiros. Somas e subtrações não acumulam erro de arredondamento: "saldo inicial + entradas + ajustes − saídas == estoque atual" vale com igualdade exata.
+Valores com mais casas ou dígitos são recusados (422), nunca arredondados em silêncio.
+**Justificativa.** Achado 8: com `float`, 0,1 somado 10 mil vezes dava 1000,0000000001588.
+**Implementação.** `NUMERIC(14,3)` no banco, `decimal.Decimal` no código, migração Alembic `0002`. O JSON continua numérico.
+**Testes.** `tests/test_decimal.py`.
+
+### RN18 (nova, atualiza a RN14) — Cada requisição entra em uma única fila
+**Regra.** Com vários processos da API, cada requisição aberta é **reivindicada** por um único processo antes de ir para a fila em memória dele. A reivindicação vale por
+um prazo (`FILA_LEASE_S`); vencido, outro processo pode retomá-la.
+**Justificativa.** Achado 2: todo processo reenfileirava todas as pendentes. A correção do estoque continua sendo da RN14 (idempotência): a reivindicação evita
+trabalho duplicado, não é ela que protege o saldo.
+**Implementação.** `fila_service.reivindicar_e_enfileirar` (`UPDATE ... WHERE id IN (SELECT ... FOR UPDATE SKIP LOCKED) RETURNING`). **Limites** (achado 17): a
+prioridade entre processos não é estrita; o prazo não é renovado.
+**Testes.** `tests/test_fila_erros.py` (Parte A).
+
+### RN19 (nova, atualiza a RN14) — Requisições com erro são reprocessadas, com limite
+**Regra.** Uma requisição que falha ao ser processada fica em `ERRO` com o contador `tentativas` e o `ultimo_erro`. Uma rotina periódica a recoloca na fila, com espera
+crescente entre as tentativas, até `ERRO_MAX_TENTATIVAS` (padrão 3). Depois disso é **ERRO definitivo**: não é mais reprocessada, é registrada na auditoria
+(`requisicao_erro_definitivo`) e aparece no diagnóstico. Uma requisição já aprovada, parcial ou negada **nunca** vira `ERRO` (nem é reprocessada).
+**Justificativa.** Achado 3 (falha transitória virava erro definitivo) e achado 16 (`ERRO` sobre requisição já debitada levaria a débito em dobro).
+**Implementação.** `fila_service._marcar_erro`, `reprocessar_erros` e `reprocessar_erros_loop`; configuração por variáveis de ambiente (README).
+**Testes.** `tests/test_fila_erros.py` (Parte B).
+
 ## 3. Regras que já existiam no código e não estavam no planejamento
 
 Registradas agora, para o documento refletir o que o sistema de fato faz:

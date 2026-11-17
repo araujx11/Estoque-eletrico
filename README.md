@@ -155,13 +155,17 @@ nome não termine em `_test` ou `_bench`, então o `estoque_db` nunca é tocado.
 | `TEST_DATABASE_URL` | `postgresql+asyncpg://estoque_user:estoque_pass@localhost:5432/estoque_test` |
 | `BENCH_DATABASE_URL` | `postgresql+asyncpg://estoque_user:estoque_pass@localhost:5432/estoque_bench` |
 | `N_WORKERS` | `3` (número de workers da API; ver `app/main.py`) |
+| `FILA_LEASE_S` | `300` (segundos que uma reivindicação da fila vale antes de outro processo retomá-la) |
+| `ERRO_REPROCESSAR_INTERVALO_S` | `30` (de quanto em quanto tempo a API reprocessa requisições em erro; `0` desliga) |
+| `ERRO_MAX_TENTATIVAS` | `3` (falhas aceitas antes do erro definitivo) |
+| `ERRO_BACKOFF_BASE_S` | `5` (espera após a 1ª falha; dobra a cada falha) |
 
 ```powershell
 docker compose up -d                       # o Postgres precisa estar no ar
 .\venv\Scripts\Activate.ps1
 pip install -r requirements-dev.txt        # pytest, pytest-asyncio, matplotlib
 
-pytest                                     # tudo (~35 s)
+pytest                                     # tudo (~1,5 min)
 pytest -m "not stress"                     # pula o teste de estresse (200 requisições simultâneas)
 pytest tests/test_senhas_fila.py tests/test_prioridade_concorrente.py tests/test_reprocessamento.py   # achados 14 e 1 (corrigidos)
 ```
@@ -191,6 +195,25 @@ contenção (1 material) e baixa contenção (50 materiais), um baseline sequenc
 de corrida. Resultados em `benchmarks/resultados/` (`resultados.csv`, `resumo.md`, `ambiente.json`, gráficos
 `grafico_*.png`; a versão `--rapido` fica em `resultados/rapido/`). A análise completa está em
 [`docs/benchmark.md`](docs/benchmark.md) e os bugs/fragilidades encontrados em [`docs/achados.md`](docs/achados.md).
+
+### Migrações com Alembic
+O esquema agora é versionado com o Alembic (`alembic/`, configuração assíncrona; usa a mesma `DATABASE_URL` da aplicação).
+
+```powershell
+python -m alembic current                  # versão do banco
+python -m alembic upgrade head             # aplica o que falta
+```
+
+| Migração | O que faz |
+|---|---|
+| `0001` | esquema inicial: cria só as tabelas que ainda não existem (não altera as existentes) |
+| `0002` | quantidades de `FLOAT` para `NUMERIC(14,3)` (achado 8), **sem apagar dados** (`ALTER COLUMN ... USING ROUND(col::numeric, 3)`) |
+| `0003` | colunas da fila com vários processos e do reprocessamento de erros (`reivindicada_*`, `tentativas`, `ultimo_erro`, `proxima_tentativa_em`) |
+
+**Banco de desenvolvimento já existente** (criado antes do Alembic): **pare a API** (o `ALTER` reescreve as tabelas e trava as linhas), faça um backup
+(`docker exec estoque_postgres pg_dump -U estoque_user estoque_db > backup.sql`) e rode `python -m alembic upgrade head`. Banco novo: basta subir a API; o `init_models()`
+já cria o esquema atual, e `alembic upgrade head` o marca como atualizado. Se a API subir num banco ainda em `FLOAT`, ela avisa no log.
+O `init_models()` ainda aplica os `ALTER TABLE ... IF NOT EXISTS` antigos (a troca completa por migrações fica para uma próxima etapa).
 
 ### Atualizando um banco já existente (sem Alembic)
 `create_all` **não altera tabelas existentes**. Ao subir a API, `init_models()` cria o que é novo (`usuarios`,
@@ -266,4 +289,4 @@ docker-compose.yml               # sobe o Postgres local
 - [ ] Endpoint de "diagnóstico de déficit" (o que o enunciado descreveu:
       "Cabo insuficiente, déficit de 20m, Obra C pendente")
 - [x] Autenticação/autorização por perfil e obra
-- [ ] Alembic para migrações versionadas do schema
+- [x] Alembic para migrações versionadas do schema (parcial: `init_models()` ainda faz os `ALTER` antigos)

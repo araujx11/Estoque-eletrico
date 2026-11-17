@@ -6,24 +6,28 @@ Encontrados durante a escrita dos testes e do benchmark. Cada item cita o teste 
 (mensagens de validação em inglês) foram **corrigidos**, com testes e medições antes/depois (ver "Correção aplicada" em cada um).
 O achado 2 ficou **mitigado** pela correção do 1. Os demais continuam sem correção.
 
+**Atualização (pendências 3 e 4):** os achados **2** (fila com vários processos), **3** (erros nunca reprocessados) e **8** (`Float`) foram **corrigidos**, e a correção do 3 revelou e corrigiu o novo achado **16** (falha depois do commit virava `ERRO`). Limitações que sobraram estão no achado **17**.
+
 ## Resumo
 
 | # | Achado | Severidade | Evidência |
 |---|---|---|---|
 | 14 | ✅ **CORRIGIDO na Sprint 05.** **Com mais de 1 worker a prioridade não vale na alocação do estoque**: a fila retira em ordem, mas os itens correm juntos e o lock do material vai para quem chegar primeiro (inversões medidas de 0 % a 35 % conforme as condições, com 3 ou 8 workers; sempre 0 % com 1) | **Alta** (é o requisito central de priorização) | `tests/test_prioridade_concorrente.py` (xfail) e experimento em `docs/relatorios-e-diagnostico.md` |
 | 1 | ✅ **CORRIGIDO na Sprint 05.** `processar_requisicao` não era idempotente: reprocessar a mesma requisição debita o estoque de novo | **Alta** | `tests/test_reprocessamento.py` (2 testes `xfail`) |
-| 2 | ⚠️ **Mitigado pela correção do 1** (a duplicidade na fila já não debita de novo; a fila duplicada continua existindo). Com mais de um processo da API (`uvicorn --workers N`), cada processo tem sua própria fila e reenfileira *todas* as pendentes na partida → duplicidade → dispara o achado 1 | **Alta** (se escalar horizontalmente) | análise de `main.py`/`fila_service.py`; teste de reinício |
-| 3 | Requisições em `ERRO` nunca são reprocessadas; falhas transitórias (ex.: perda de conexão) viram erro definitivo | Média | análise de `worker_loop`/`_marcar_erro` |
+| 2 | ✅ **CORRIGIDO** (reivindicação atômica com `FOR UPDATE SKIP LOCKED`; antes só mitigado pela correção do 1). Com mais de um processo da API (`uvicorn --workers N`), cada processo tem sua própria fila e reenfileira *todas* as pendentes na partida → duplicidade → dispara o achado 1 | **Alta** (se escalar horizontalmente) | `tests/test_fila_erros.py` (3 instâncias sobre o mesmo banco) |
+| 3 | ✅ **CORRIGIDO.** Requisições em `ERRO` nunca eram reprocessadas; falhas transitórias (ex.: perda de conexão) viravam erro definitivo | Média | `tests/test_fila_erros.py` (erro transitório, persistente, backoff) |
 | 4 | A API grava a requisição e só depois a coloca na fila: entre os dois passos a requisição fica sem dono até a próxima reinicialização | Baixa | análise de `routes.py` |
 | 5 | Mais workers que conexões do pool (`pool_size=20 + max_overflow=10 = 30`) não dá ganho, e o excedente só espera conexão | Baixa | análise do código (32 workers **não foi medido**; o benchmark mede até 16) |
 | 6 | A fila é em memória e não limitada: sem *back-pressure* e perdida em queda do processo (mitigado só por `reenfileirar_pendentes`) | Informativa | análise |
 | 7 | A chave de prioridade da fila é calculada **ao enfileirar** e não muda se a obra mudar de prioridade/“parada” depois; o diagnóstico usa os dados **atuais** da obra | Média | análise (`prioridade.py`/`diagnostico_service.py`) |
-| 8 | Quantidades de estoque são `Float`: somas longas acumulam erro de arredondamento (a conservação só é exata com valores “bonitos”) | Média | análise; os testes de conservação usam inteiros |
+| 8 | ✅ **CORRIGIDO.** Quantidades de estoque eram `Float`: somas longas acumulavam erro de arredondamento (0,1 somado 10 mil vezes dava 1000,0000000001588) | Média | `tests/test_decimal.py` |
 | 9 | “Por dia” nos relatórios e no dashboard agrupa por dia **UTC**; em Recife (UTC−3) pedidos feitos à noite caem no dia seguinte | Baixa | análise |
 | 10 | `PUT /materiais/{id}` ainda aceita mudar `quantidade_estoque` (vira `AJUSTE` com motivo genérico), contornando o “motivo obrigatório” | Baixa | `test_edicao_de_quantidade_vira_ajuste` |
 | 11 | Remover material apaga o histórico de movimentações dele; remover obra com histórico apaga as requisições (as saídas ficam, sem vínculo) | Média | `test_remover_*` |
 | 12 | Falhas de login são auditadas **sem autenticação**: quem insistir gera linhas sem limite (crescimento de tabela / ruído), e não há *rate limit* | Média | análise (`/auth/login`) |
 | 15 | ✅ **CORRIGIDO na Sprint 05.** Mensagens de validação (422) em inglês e a resposta **ecoava o valor enviado** (inclusive senhas) | Média | `tests/test_mensagens_erro.py`; conferido na API antes e depois |
+| 16 | ✅ **CORRIGIDO junto com o 3.** `_marcar_erro` gravava `ERRO` em qualquer requisição, inclusive numa que **já tinha sido aprovada** (falha de conexão *depois* do commit, no `refresh`). Com o reprocessamento automático isso viraria **débito em dobro** | **Alta** (só passou a importar com o achado 3) | `test_falha_depois_do_commit_nao_vira_erro_nem_debita_de_novo` (falha sem a proteção) |
+| 17 | Limitações que sobraram da fila com vários processos: a prioridade só é estrita dentro de um processo; o prazo da reivindicação não é renovado; a partida não distribui a carga | Média | análise + `test_prioridade_dentro_de_cada_instancia_e_global_quando_uma_so_reivindica` |
 | 13 | O livro-razão custou ≈ 4–13 % de throughput (o `INSERT` extra dentro do lock); dá para fundir débito e registro em 1 comando SQL | Informativa | A/B em `docs/benchmark.md` §7 |
 
 ## 1. Reprocessamento duplica o débito (ALTA)
@@ -66,7 +70,7 @@ locks é sempre requisição → material (nenhuma outra rota trava material e d
 em vez de 70 nos dois testes; depois: 70. Os dois `xfail` viraram testes normais e há 5 novos (várias repetições, parcial/negada, 10
 workers na mesma requisição, requisição em ERRO e o gancho da fila).
 
-## 2. Vários processos da API reenfileiram tudo (ALTA, se escalar)
+## 2. Vários processos da API reenfileiram tudo (ALTA, se escalar) — corrigido
 
 `lifespan` chama `reenfileirar_pendentes()` em **todo** processo que sobe. Com `uvicorn --workers 2`, cada
 processo enfileira *todas* as requisições abertas do banco (inclusive as que o outro processo já está
@@ -80,12 +84,71 @@ requisição pendente com `SELECT ... FOR UPDATE SKIP LOCKED` (fila no Postgres)
 partida e só a requisição ainda `PENDENTE` com `UPDATE ... SET status='em_processamento' WHERE status='pendente'
 RETURNING id` (reivindicação atômica).
 
-## 3. Requisições em `ERRO` são definitivas
+**Correção aplicada.** Na partida, cada processo **reivindica** as requisições no banco antes de enfileirá-las
+(`fila_service.reivindicar_e_enfileirar`):
+
+```sql
+UPDATE requisicoes SET status='EM_PROCESSAMENTO', reivindicada_por=:processo, reivindicada_em=:agora
+WHERE id IN (SELECT id FROM requisicoes
+             WHERE status='PENDENTE' OR (status='EM_PROCESSAMENTO' AND (reivindicada_em IS NULL OR reivindicada_em < :agora - :lease))
+             FOR UPDATE SKIP LOCKED)
+RETURNING id, obra_id, material_id, criado_em
+```
+
+* **Por que atômica e sem espera.** O `UPDATE` é um comando só: a linha muda de `PENDENTE` para `EM_PROCESSAMENTO` com o dono gravado na
+  mesma instrução. `SKIP LOCKED` faz o processo que chegar depois **pular** o que o outro está reivindicando em vez de esperar; assim dois
+  processos recebem conjuntos **disjuntos** e nenhuma requisição entra em duas filas. A transação só contém esse `UPDATE` (milissegundos),
+  e ela **não** pega o lock do material, então não interfere na ordem de locks requisição → material.
+* **Prazo (lease, `FILA_LEASE_S`, padrão 300 s).** Se o processo dono cair, a requisição ficaria presa em `EM_PROCESSAMENTO`. Passado o prazo,
+  outro processo a retoma (a rotina periódica do achado 3 também faz essa varredura). Registros antigos sem dono (`reivindicada_em` nulo)
+  contam como vencidos.
+* **Por que é segura com a idempotência (RN14).** A reivindicação só evita **trabalho duplicado**; a **correção** do estoque não depende dela.
+  Mesmo que a mesma requisição acabe em duas filas (prazo vencido enquanto o dono ainda a processava; requisição criada pela API de um
+  processo enquanto outro reenfileira), `processar_requisicao` trava a requisição e a encontra já resolvida: devolve sem debitar. Pior caso =
+  um processamento a mais que não faz nada.
+* **Teste** (`tests/test_fila_erros.py`): 3 instâncias reivindicando ao mesmo tempo (conjuntos disjuntos e completos, a reivindicação aponta
+  para quem enfileirou); reivindicada não é reivindicada de novo; prazo vencido permite retomar; `SKIP LOCKED` não espera uma linha travada
+  por outra transação (sem ele o teste trava); 3 instâncias com 3 workers cada, 135 requisições com déficit: nenhuma requisição com mais de
+  uma saída e estoque conservado **exatamente** em cada material.
+
+## 3. Requisições em `ERRO` são definitivas (corrigido)
 
 `worker_loop` captura qualquer exceção e marca `ERRO`; nada reprocessa. Um erro transitório (rede, timeout
 de pool, deadlock) vira falha permanente sem notificação. **Correção proposta:** classificar erros
 (transitório → recolocar na fila com *retry* limitado e *backoff*; permanente → `ERRO`) — dependendo do
 achado 1 estar corrigido.
+
+**Correção aplicada.** Novos campos em `requisicoes`: `tentativas`, `ultimo_erro`, `proxima_tentativa_em`.
+
+* `_marcar_erro` conta a tentativa, guarda `Tipo: mensagem` (até 500 caracteres) e agenda a próxima com *backoff* exponencial
+  (`ERRO_BACKOFF_BASE_S` × 2^(tentativas−1); padrão 5 s, 10 s, 20 s...).
+* Rotina periódica (`reprocessar_erros_loop`, a cada `ERRO_REPROCESSAR_INTERVALO_S`, padrão 30 s; `0` desliga) reivindica de forma atômica (a
+  mesma do achado 2) as requisições em `ERRO` com `tentativas < ERRO_MAX_TENTATIVAS` (padrão 3) e backoff vencido, e as recoloca na fila.
+* Ao atingir o limite a requisição fica em **ERRO definitivo**: deixa de ser candidata, gera o registro `requisicao_erro_definitivo` na
+  auditoria e aparece em `GET /diagnostico/deficit` (campo `erros`, com `tentativas`, `max_tentativas`, `definitivo`, `ultimo_erro`).
+* Segurança do débito: ERRO significa transação desfeita (nada debitado), e o reprocessamento passa pelo mesmo `processar_requisicao`
+  idempotente. A rotina não distingue erro transitório de permanente; o limite de tentativas é o que impede o laço infinito.
+* **Testes:** erro transitório é reprocessado pela própria rotina e debita **uma** vez (1 saída); erro persistente para em 3 tentativas, deixa o
+  estoque intacto e grava **uma** linha de auditoria; backoff adia a nova tentativa; 40 requisições com falhas transitórias não geram saída duplicada.
+
+## 16. `_marcar_erro` sobrescrevia requisições já resolvidas (ALTA, descoberto ao corrigir o achado 3)
+`_marcar_erro` fazia `req.status = ERRO` sem olhar o estado atual. Se a falha acontecesse **depois** do commit do débito (por exemplo, a
+conexão cai no `db.refresh` que vem depois), a requisição já estava `APROVADA` e o estoque debitado, mas passava a `ERRO`. Com o reprocessamento
+automático ela seria processada de novo e **debitaria duas vezes**. **Correção aplicada:** `_marcar_erro` trava a linha e não altera quem já está
+`APROVADA`, `PARCIAL` ou `NEGADA`. Teste `test_falha_depois_do_commit_nao_vira_erro_nem_debita_de_novo`; confirmado que ele **falha** sem a proteção.
+
+## 17. Limitações que sobraram da fila com vários processos (média)
+* **Prioridade entre processos não é estrita.** As senhas por material (RN15) e o heap são em memória de cada processo. Se dois processos
+  reivindicam ao mesmo tempo, cada um recebe um subconjunto e a ordem **entre** subconjuntos é a da corrida pelo lock do material. Com um único
+  processo reivindicando (partida normal: o primeiro pega tudo) a prioridade vale para o conjunto inteiro. **Correção proposta:** fila única no
+  banco (ordenada por prioridade) ou broker externo.
+* **O prazo da reivindicação não é renovado.** Um backlog muito grande, esperando na fila em memória de quem o reivindicou por mais que
+  `FILA_LEASE_S`, pode ser retomado por outro processo. Não há risco para o estoque (RN14), só trabalho repetido. **Correção proposta:** *heartbeat*
+  que renova `reivindicada_em`, ou prazo maior.
+* **A partida não distribui a carga:** quem sobe primeiro reivindica tudo que está aberto. Os processos só dividem o trabalho do que chega depois
+  pela API (cada um enfileira o que recebe).
+* Uma requisição criada pela API de um processo ainda está `PENDENTE` quando outro processo reenfileira: pode ser reivindicada por ele (duplicidade
+  inofensiva, ver RN14).
 
 ## 4. Janela entre `commit` e `fila.adicionar`
 
@@ -125,10 +188,27 @@ antiga; só os pedidos novos usam a regra atualizada. O diagnóstico de déficit
 vai fazer de fato. **Correção proposta:** reordenar a fila quando a obra mudar (reconstruir o heap) ou fazer o worker
 reavaliar a prioridade no momento de retirar o item.
 
-## 8. Estoque em `Float` (média)
+## 8. Estoque em `Float` (média) — corrigido
 `quantidade_estoque`, `quantidade_solicitada`, `quantidade_atendida` e `saldo_apos` são `Float`. Com quantidades fracionárias
 (por exemplo 0,1 m) a conservação “inicial + entradas − saídas == atual” deixa de ser exata. **Correção proposta:** `Numeric(12, 3)`
 com `Decimal` na camada de serviço (mudança de modelo ⇒ migração; deixada para quando houver Alembic).
+
+**Correção aplicada.** As 6 colunas de quantidade (`materiais.quantidade_estoque/estoque_critico`, `requisicoes.quantidade_solicitada/atendida`,
+`movimentacoes_estoque.quantidade/saldo_apos`) são `NUMERIC(14,3)` e o código usa `decimal.Decimal` (modelos, serviço de estoque, diagnóstico,
+relatórios, auditoria, CSV).
+
+* **Escala:** 3 casas decimais e até 11 dígitos inteiros (14 no total). Cabe em um `double` sem perda, então a API continua devolvendo **número** no
+  JSON (`Qtd` em `app/schemas.py`) e o frontend não mudou (`step="any"`, `fmt` com até 3 casas). A entrada com mais de 3 casas ou mais de 11
+  dígitos inteiros é **recusada** com 422 em português (não arredonda em silêncio), sem devolver o valor enviado (RN16).
+* **Migração (Alembic, ver README):** `0002` faz `ALTER COLUMN ... TYPE NUMERIC(14,3) USING ROUND(col::numeric, 3)` sem apagar dados, e é idempotente.
+  Testada em banco descartável com o esquema antigo: tipos convertidos, dados preservados (`0.30000000000000004` virou `0.300`). O `ALTER` reescreve
+  a tabela e trava as linhas, então rode com a API parada. Se a API subir num banco ainda em `FLOAT`, o `init_models()` registra um aviso.
+* **Testes** (`tests/test_decimal.py`): 0,1 somado 10 mil vezes dá **exatamente** 1000 (no modelo e em `SUM` no banco; com `float` dá 1000,0000000001588);
+  conservação **exata** (`==`, sem tolerância) com 0,1/0,25/12,345; cenário 100/40/30/50 igual; estresse com 200 requisições fracionadas e 8 workers; JSON
+  numérico; recusa de excesso de casas. Um teste do seed teve só a conta ajustada para `Decimal`.
+* **Desempenho** (benchmark `--rapido`, 300 requisições): a comparação **simples** antes/depois piorou (ex.: 16 workers, alta contenção, speedup 3,34 → 1,74), mas a
+  máquina estava muito ruidosa (a linha sequencial também oscilou de 5,2 s a 7,6 s). Por isso fiz um **A/B intercalado** (código antigo e novo alternados,
+  3 pares, baixa contenção): vazão com 4 workers antiga 114/115/101 req/s contra nova 81/95/113; razão 4 workers / sequencial 2,8/2,8/2,7 contra 2,7/2,4/2,6. No pior par a razão caiu 14 % (2,75 → 2,36) e nos outros dois 4 %; no par 1 a vazão absoluta nova foi 29 % menor, mas a linha sequencial do mesmo par também caiu 26 %. Sem tendência consistente, **não há evidência clara de custo do `Decimal`**, mas com 3 pares e esse ruído não dá para afirmar que o custo é zero.
 
 ## 9. Dia em UTC nos relatórios (baixa)
 Os timestamps são UTC naive, e os agrupamentos “por dia/semana” também. Para a equipe de Recife, um pedido às 22h local aparece
