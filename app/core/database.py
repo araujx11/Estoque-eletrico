@@ -4,8 +4,10 @@ Configuração da conexão assíncrona com o PostgreSQL usando SQLAlchemy.
 A engine assíncrona (asyncpg) é o que permite que múltiplas requisições
 concorrentes conversem com o banco sem bloquear o event loop do FastAPI.
 """
+import asyncio
 import logging
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
@@ -36,44 +38,33 @@ async def get_db():
         yield session
 
 
-async def init_models():
-    """Cria as tabelas no banco (uso em dev/demo; em produção use Alembic)."""
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        if engine.dialect.name == "postgresql":
-            # create_all não altera tabelas existentes: adiciona as colunas novas de "obras"
-            for ddl in (
-                "ALTER TABLE obras ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'em_andamento'",
-                "ALTER TABLE obras ADD COLUMN IF NOT EXISTS progresso INTEGER NOT NULL DEFAULT 0",
-                "ALTER TABLE obras ADD COLUMN IF NOT EXISTS descricao_andamento TEXT",
-                "ALTER TABLE obras ADD COLUMN IF NOT EXISTS finalizada_em TIMESTAMP",
-                "ALTER TABLE requisicoes ADD COLUMN IF NOT EXISTS pedido_id VARCHAR(36)",
-                "ALTER TABLE requisicoes ADD COLUMN IF NOT EXISTS solicitante_id INTEGER REFERENCES usuarios(id)",
-                "ALTER TABLE requisicoes ADD COLUMN IF NOT EXISTS reivindicada_por VARCHAR(60)",
-                "ALTER TABLE requisicoes ADD COLUMN IF NOT EXISTS reivindicada_em TIMESTAMP",
-                "ALTER TABLE requisicoes ADD COLUMN IF NOT EXISTS tentativas INTEGER NOT NULL DEFAULT 0",
-                "ALTER TABLE requisicoes ADD COLUMN IF NOT EXISTS ultimo_erro TEXT",
-                "ALTER TABLE requisicoes ADD COLUMN IF NOT EXISTS proxima_tentativa_em TIMESTAMP",
-                "ALTER TABLE materiais ADD COLUMN IF NOT EXISTS ativo BOOLEAN NOT NULL DEFAULT true",
-                "ALTER TABLE materiais ADD COLUMN IF NOT EXISTS desativado_em TIMESTAMP",
-                "ALTER TABLE obras ADD COLUMN IF NOT EXISTS ativo BOOLEAN NOT NULL DEFAULT true",
-                "ALTER TABLE obras ADD COLUMN IF NOT EXISTS desativado_em TIMESTAMP",
-                "ALTER TABLE movimentacoes_estoque ADD COLUMN IF NOT EXISTS obra_id INTEGER REFERENCES obras(id)",
-                "CREATE INDEX IF NOT EXISTS ix_movimentacoes_estoque_obra_id ON movimentacoes_estoque (obra_id)",
-                "CREATE INDEX IF NOT EXISTS ix_requisicoes_obra_id ON requisicoes (obra_id)",
-                "CREATE INDEX IF NOT EXISTS ix_requisicoes_material_id ON requisicoes (material_id)",
-                "CREATE INDEX IF NOT EXISTS ix_requisicoes_status ON requisicoes (status)",
-                "CREATE INDEX IF NOT EXISTS ix_requisicoes_criado_em ON requisicoes (criado_em)",
-            ):
-                await conn.exec_driver_sql(ddl)
+def _config_alembic():
+    from alembic.config import Config
+    raiz = Path(__file__).resolve().parents[2]
+    cfg = Config(str(raiz / "alembic.ini"))
+    cfg.set_main_option("script_location", str(raiz / "alembic"))
+    cfg.attributes["programatico"] = True          # env.py não mexe na configuração de logs da aplicação
+    return cfg
 
-            # banco criado antes do achado 8: as quantidades ainda são FLOAT. Quem converte é o Alembic (com a API parada)
-            antigas = (await conn.exec_driver_sql(
-                "SELECT count(*) FROM information_schema.columns WHERE data_type = 'double precision' AND "
-                "(table_name, column_name) IN (('materiais','quantidade_estoque'), ('materiais','estoque_critico'), "
-                "('requisicoes','quantidade_solicitada'), ('requisicoes','quantidade_atendida'), "
-                "('movimentacoes_estoque','quantidade'), ('movimentacoes_estoque','saldo_apos'))"
-            )).scalar()
-            if antigas:
-                logging.getLogger("database").warning(
-                    "%s coluna(s) de quantidade ainda são FLOAT: rode `python -m alembic upgrade head` (veja o README).", antigas)
+
+def _migrar_sync():
+    from alembic import command
+    command.upgrade(_config_alembic(), "head")
+
+
+async def init_models():
+    """Prepara o banco na partida da aplicação: aplica as migrações do Alembic (`alembic upgrade head`).
+
+    * Banco novo: a migração 0001 cria o esquema atual. Banco antigo: as migrações aplicam só o que falta (sem apagar dados).
+    * Vários processos subindo juntos: o env.py usa um lock do Postgres, então só um migra por vez.
+    * `AUTO_MIGRAR=0` desliga (quem prefere rodar `python -m alembic upgrade head` à mão antes de subir a API).
+    * Fora do PostgreSQL (SQLite em experimentos) não há migrações: só `create_all`.
+    """
+    if engine.dialect.name != "postgresql":
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        return
+    if os.getenv("AUTO_MIGRAR", "1") == "0":
+        logging.getLogger("database").warning("AUTO_MIGRAR=0: as migrações não foram aplicadas (rode `python -m alembic upgrade head`).")
+        return
+    await asyncio.to_thread(_migrar_sync)          # o Alembic usa o próprio event loop (asyncio.run) numa thread à parte

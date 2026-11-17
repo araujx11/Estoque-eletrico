@@ -95,6 +95,11 @@ na mesma transação. Como o limite é conferido sob o lock do material, duas de
 novos pedidos (nem entradas, no caso do material) e não entram na fila. Podem ser **reativados** pelo gestor, sem recriar. Não se desativa com requisições pendentes ou em processamento.
 **Implementação e testes.** Colunas `ativo`/`desativado_em` (migração `0006`); `tests/test_exclusao_logica.py` (13 testes). Detalhes em `docs/achados.md` (achado 11).
 
+### RN23 (nova, achado 12) — Limite de tentativas de login
+**Regra.** Após N falhas seguidas de login para o mesmo e-mail (ou para o mesmo IP, com limite maior) dentro da janela de bloqueio, novas tentativas são recusadas por alguns minutos com a mensagem
+«Muitas tentativas. Tente novamente em X minutos.», mesmo com a senha correta. O bloqueio é registrado na auditoria (`login_bloqueado`). Os valores são configuráveis (README).
+**Testes.** `tests/test_login_limite.py`.
+
 ## 3. Regras que já existiam no código e não estavam no planejamento
 
 Registradas agora, para o documento refletir o que o sistema de fato faz:

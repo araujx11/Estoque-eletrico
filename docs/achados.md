@@ -24,7 +24,7 @@ O achado 2 ficou **mitigado** pela correção do 1. Os demais continuam sem corr
 | 9 | “Por dia” nos relatórios e no dashboard agrupa por dia **UTC**; em Recife (UTC−3) pedidos feitos à noite caem no dia seguinte | Baixa | análise |
 | 10 | `PUT /materiais/{id}` ainda aceita mudar `quantidade_estoque` (vira `AJUSTE` com motivo genérico), contornando o “motivo obrigatório” | Baixa | `test_edicao_de_quantidade_vira_ajuste` |
 | 11 | ✅ **CORRIGIDO.** Remover material apagava o histórico de movimentações dele; remover obra com histórico apagava as requisições (as saídas ficavam, sem vínculo) | Média | `tests/test_exclusao_logica.py` |
-| 12 | Falhas de login são auditadas **sem autenticação**: quem insistir gera linhas sem limite (crescimento de tabela / ruído), e não há *rate limit* | Média | análise (`/auth/login`) |
+| 12 | ✅ **CORRIGIDO.** Falhas de login eram auditadas **sem autenticação**: quem insistisse gerava linhas sem limite (crescimento de tabela / ruído), e não havia *rate limit* | Média | `tests/test_login_limite.py` |
 | 15 | ✅ **CORRIGIDO na Sprint 05.** Mensagens de validação (422) em inglês e a resposta **ecoava o valor enviado** (inclusive senhas) | Média | `tests/test_mensagens_erro.py`; conferido na API antes e depois |
 | 16 | ✅ **CORRIGIDO junto com o 3.** `_marcar_erro` gravava `ERRO` em qualquer requisição, inclusive numa que **já tinha sido aprovada** (falha de conexão *depois* do commit, no `refresh`). Com o reprocessamento automático isso viraria **débito em dobro** | **Alta** (só passou a importar com o achado 3) | `test_falha_depois_do_commit_nao_vira_erro_nem_debita_de_novo` (falha sem a proteção) |
 | 17 | Limitações que sobraram da fila com vários processos: a prioridade só é estrita dentro de um processo; o prazo da reivindicação não é renovado; a partida não distribui a carga | Média | análise + `test_prioridade_dentro_de_cada_instancia_e_global_quando_uma_so_reivindica` |
@@ -202,7 +202,7 @@ relatórios, auditoria, CSV).
   dígitos inteiros é **recusada** com 422 em português (não arredonda em silêncio), sem devolver o valor enviado (RN16).
 * **Migração (Alembic, ver README):** `0002` faz `ALTER COLUMN ... TYPE NUMERIC(14,3) USING ROUND(col::numeric, 3)` sem apagar dados, e é idempotente.
   Testada em banco descartável com o esquema antigo: tipos convertidos, dados preservados (`0.30000000000000004` virou `0.300`). O `ALTER` reescreve
-  a tabela e trava as linhas, então rode com a API parada. Se a API subir num banco ainda em `FLOAT`, o `init_models()` registra um aviso.
+  a tabela e trava as linhas: faça backup e, se quiser controlar o momento, suba com `AUTO_MIGRAR=0` e rode o `upgrade` com a API parada (desde o Prompt 6 a API aplica as migrações sozinha na partida).
 * **Testes** (`tests/test_decimal.py`): 0,1 somado 10 mil vezes dá **exatamente** 1000 (no modelo e em `SUM` no banco; com `float` dá 1000,0000000001588);
   conservação **exata** (`==`, sem tolerância) com 0,1/0,25/12,345; cenário 100/40/30/50 igual; estresse com 200 requisições fracionadas e 8 workers; JSON
   numérico; recusa de excesso de casas. Um teste do seed teve só a conta ajustada para `Decimal`.
@@ -229,9 +229,19 @@ Migração `0006`. Os testes que descreviam a remoção física (`test_remover_*
 ## 10–12. Pequenas fragilidades da etapa de relatórios
 * **#10** Remover `quantidade_estoque` do `PUT /materiais` e obrigar Entrada/Ajuste (a tela já faz isso; só a API ficou compatível).
 * **#11** Trocar a remoção por **arquivamento** (`ativo=false`) de materiais e obras, preservando histórico e auditoria.
-* **#12** *Rate limit* no login (por IP e por e-mail) e política de retenção/rotação da tabela `auditoria`.
+* **#12** ✅ *Rate limit* no login (por IP e por e-mail): corrigido, ver abaixo. A política de retenção/rotação da tabela `auditoria` continua em aberto.
 * O dashboard carrega o Chart.js por **CDN sem SRI**: sem internet os gráficos não aparecem (a tela avisa e os cards continuam
   funcionando). Para demonstrações offline, baixar o arquivo para `frontend/vendor/`.
+
+## 12 (corrigido). Limite de tentativas de login
+Depois de `LOGIN_MAX_TENTATIVAS` (padrão 5) falhas **do mesmo e-mail** ou `LOGIN_MAX_TENTATIVAS_IP` (padrão 20) falhas **do mesmo IP** dentro de `LOGIN_BLOQUEIO_MIN` (padrão 15) minutos, o login é recusado com
+**429** e a mensagem «Muitas tentativas. Tente novamente em X minutos.» (com `Retry-After`). Durante o bloqueio **nem a senha certa entra** e a senha nem chega a ser verificada.
+* **Contagem no banco** (tabela `tentativas_login`, migração `0007`), então vale com vários processos. Guarda só o e-mail digitado e o IP, nunca a senha.
+* **Não cresce sob ataque:** tentativas recusadas durante o bloqueio não gravam nada, e as falhas fora da janela são apagadas aos poucos. A auditoria registra **uma** linha `login_bloqueado` ao cruzar o limite (as falhas
+  continuam em `login_falhou`).
+* **Não revela quais e-mails existem:** e-mail inexistente bloqueia do mesmo jeito e com a mesma mensagem. Login com sucesso zera as falhas daquele e-mail.
+* **Limitações:** o limite por IP é mais alto porque vários usuários podem dividir um IP; atrás de proxy reverso o IP visto é o do proxy (use `--proxy-headers`/`--forwarded-allow-ips` no uvicorn); o
+  bloqueio por e-mail permite que alguém trave de propósito a conta de outro por 15 minutos (negação de serviço), troca que é inerente a esse tipo de proteção.
 
 ## 13. Custo medido do livro-razão e otimização candidata (informativa)
 O registro da SAÍDA na mesma transação do débito custou **≈ 4–13 % de throughput** (A/B intercalado em `docs/benchmark.md`, seção 7),

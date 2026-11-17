@@ -33,7 +33,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Controle de Estoque Paralelo - Engenharia Elétrica",
+    title="ElectroStock - Controle de Estoque Paralelo",
     description=(
         "Motor de alocação de materiais para obras com processamento "
         "concorrente via fila + pool de workers, e consistência garantida "

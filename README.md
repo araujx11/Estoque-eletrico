@@ -1,4 +1,4 @@
-# Controle de Estoque Paralelo — Engenharia Elétrica
+# ElectroStock — Controle de Estoque Paralelo para Engenharia Elétrica
 
 MVP de um sistema de controle de estoque com **processamento concorrente
 de requisições**, feito para uma empresa fictícia de engenharia elétrica
@@ -159,6 +159,10 @@ nome não termine em `_test` ou `_bench`, então o `estoque_db` nunca é tocado.
 | `ERRO_REPROCESSAR_INTERVALO_S` | `30` (de quanto em quanto tempo a API reprocessa requisições em erro; `0` desliga) |
 | `ERRO_MAX_TENTATIVAS` | `3` (falhas aceitas antes do erro definitivo) |
 | `ERRO_BACKOFF_BASE_S` | `5` (espera após a 1ª falha; dobra a cada falha) |
+| `AUTO_MIGRAR` | `1` (aplica as migrações do Alembic ao subir a API; `0` desliga) |
+| `LOGIN_MAX_TENTATIVAS` | `5` (falhas de login por e-mail antes do bloqueio) |
+| `LOGIN_MAX_TENTATIVAS_IP` | `20` (falhas por IP; maior porque vários usuários podem dividir um IP) |
+| `LOGIN_BLOQUEIO_MIN` | `15` (minutos de bloqueio / janela de contagem) |
 
 ```powershell
 docker compose up -d                       # o Postgres precisa estar no ar
@@ -212,18 +216,14 @@ python -m alembic upgrade head             # aplica o que falta
 | `0004` | preenche o responsável (`usuario_id`) das saídas já existentes a partir do solicitante da requisição (RF16) |
 | `0005` | `obra_id` nas movimentações, usado pelas devoluções (RF15) |
 | `0006` | `ativo` e `desativado_em` em materiais e obras (exclusão lógica, achado 11) |
+| `0007` | tabela `tentativas_login` (limite de tentativas de login, achado 12) |
 
-**Banco de desenvolvimento já existente** (criado antes do Alembic): **pare a API** (o `ALTER` reescreve as tabelas e trava as linhas), faça um backup
-(`docker exec estoque_postgres pg_dump -U estoque_user estoque_db > backup.sql`) e rode `python -m alembic upgrade head`. Banco novo: basta subir a API; o `init_models()`
-já cria o esquema atual, e `alembic upgrade head` o marca como atualizado. Se a API subir num banco ainda em `FLOAT`, ela avisa no log.
-O `init_models()` ainda aplica os `ALTER TABLE ... IF NOT EXISTS` antigos (a troca completa por migrações fica para uma próxima etapa).
+**Ao subir a API, as migrações são aplicadas sozinhas** (`init_models()` roda `alembic upgrade head`; um lock do Postgres impede que vários processos migrem ao mesmo tempo).
+Banco novo: basta subir a API. `AUTO_MIGRAR=0` desliga isso, para quem prefere rodar `python -m alembic upgrade head` à mão antes. Fora do PostgreSQL (SQLite) só há `create_all`.
 
-### Atualizando um banco já existente (sem Alembic)
-`create_all` **não altera tabelas existentes**. Ao subir a API, `init_models()` cria o que é novo (`usuarios`,
-`movimentacoes_estoque`, `auditoria`) e aplica `ALTER TABLE … ADD COLUMN IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` nas
-tabelas antigas (colunas e índices de `requisicoes`), então **um banco de desenvolvimento já existente continua funcionando
-sem apagar nada**. Atenção: o histórico antigo **não tem movimentações** (o livro-razão começa a partir de agora); os materiais
-já cadastrados só terão `ENTRADA` de saldo inicial se forem recriados.
+**Banco de desenvolvimento já existente** (criado antes do Alembic): na primeira subida a migração `0002` converte as quantidades de `FLOAT` para `NUMERIC` (reescreve as tabelas e trava as linhas, sem apagar dados).
+Faça um backup antes (`docker exec estoque_postgres pg_dump -U estoque_user estoque_db > backup.sql`) e, se preferir controlar o momento, suba com `AUTO_MIGRAR=0` e rode o `upgrade` com a API parada.
+O histórico antigo **não tem movimentações** de antes do livro-razão: os materiais já cadastrados só terão `ENTRADA` de saldo inicial se forem recriados.
 
 Para começar do zero, com o livro-razão completo **(apaga TODOS os dados locais — confirme antes)**:
 ```powershell
@@ -292,4 +292,4 @@ docker-compose.yml               # sobe o Postgres local
 - [ ] Endpoint de "diagnóstico de déficit" (o que o enunciado descreveu:
       "Cabo insuficiente, déficit de 20m, Obra C pendente")
 - [x] Autenticação/autorização por perfil e obra
-- [x] Alembic para migrações versionadas do schema (parcial: `init_models()` ainda faz os `ALTER` antigos)
+- [x] Alembic para migrações versionadas do schema (aplicado na partida; `AUTO_MIGRAR=0` desliga)

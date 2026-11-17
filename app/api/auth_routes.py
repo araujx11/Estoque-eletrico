@@ -1,5 +1,5 @@
 """Login, usuário logado e gestão de usuários (somente gestor)."""
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,7 +9,7 @@ from app.core.database import get_db
 from app.core.security import criar_token, hash_senha, verificar_senha
 from app.models import Obra, Perfil, Usuario
 from app.schemas import SenhaReset, TokenOut, UsuarioCreate, UsuarioOut, UsuarioUpdate
-from app.services import auditoria_service
+from app.services import auditoria_service, login_limite
 
 router = APIRouter()
 somente_gestor = exigir_perfis(Perfil.GESTOR)
@@ -18,9 +18,11 @@ somente_gestor = exigir_perfis(Perfil.GESTOR)
 # ---------- Auth ----------
 
 @router.post("/auth/login", response_model=TokenOut, tags=["auth"])
-async def login(form: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
+async def login(request: Request, form: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
     """Login por formulário (campo `username` = e-mail), compatível com o botão Authorize do Swagger."""
-    email = form.username.strip().lower()
+    email = form.username.strip().lower()[:254]
+    ip = (request.client.host if request.client else "desconhecido")[:45]
+    await login_limite.verificar(db, email, ip)          # 429 se o e-mail ou o IP estiver bloqueado (nem a senha certa passa)
     usuario = (await db.execute(select(Usuario).where(Usuario.email == email))).scalar_one_or_none()
     # sempre verifica o hash (mesmo sem usuário) para não vazar quais e-mails existem
     senha_ok = await verificar_senha(form.password, usuario.senha_hash if usuario else None)
@@ -28,12 +30,14 @@ async def login(form: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = 
         # nunca registra a senha tentada; só o e-mail informado
         auditoria_service.registrar(db, usuario.id if usuario else None, "login_falhou", "usuario",
                                     usuario.id if usuario else None, {"email": email})
+        await login_limite.registrar_falha(db, email, ip)
         await db.commit()
         raise HTTPException(401, "E-mail ou senha incorretos", headers={"WWW-Authenticate": "Bearer"})
     if not usuario.ativo:
         auditoria_service.registrar(db, usuario.id, "login_negado_inativo", "usuario", usuario.id, {"email": email})
         await db.commit()
         raise HTTPException(403, "Usuário desativado. Procure um gestor.")
+    await login_limite.zerar(db, email)
     auditoria_service.registrar(db, usuario.id, "login", "usuario", usuario.id, {"email": email})
     await db.commit()
     return TokenOut(access_token=criar_token(usuario.id), usuario=UsuarioOut.model_validate(usuario))

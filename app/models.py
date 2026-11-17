@@ -181,3 +181,14 @@ class LogAuditoria(Base):
     entidade_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
     detalhes: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     criado_em: Mapped[datetime] = mapped_column(DateTime, default=_agora, index=True)
+
+
+class TentativaLogin(Base):
+    """Falhas de login recentes, por e-mail e por IP (achado 12). Só guarda o e-mail digitado e o IP, nunca a senha.
+    Linhas fora da janela de bloqueio são apagadas aos poucos, então a tabela não cresce sem limite."""
+    __tablename__ = "tentativas_login"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(254), index=True)
+    ip: Mapped[str] = mapped_column(String(45), index=True)
+    criado_em: Mapped[datetime] = mapped_column(DateTime, default=_agora, index=True)
