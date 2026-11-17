@@ -90,6 +90,11 @@ na mesma transação. Como o limite é conferido sob o lock do material, duas de
 **Limitações.** O limite é conferido por obra e material (não por requisição); devoluções sem obra só entram na conta do limite geral do material. O "Top materiais" do dashboard ainda não desconta devoluções.
 **Testes.** `tests/test_devolucoes.py` (15: válida, acima do limite, parcial, por obra, inexistentes, validação, permissões, relatório e concorrência com pedidos).
 
+### RN22 (nova, achado 11) — Materiais e obras são desativados, não apagados
+**Regra.** Remover um material ou uma obra o **desativa**; o histórico (requisições, movimentações, devoluções, auditoria) permanece. Desativados somem das listagens (o gestor os vê com `incluir_inativos`), não aceitam
+novos pedidos (nem entradas, no caso do material) e não entram na fila. Podem ser **reativados** pelo gestor, sem recriar. Não se desativa com requisições pendentes ou em processamento.
+**Implementação e testes.** Colunas `ativo`/`desativado_em` (migração `0006`); `tests/test_exclusao_logica.py` (13 testes). Detalhes em `docs/achados.md` (achado 11).
+
 ## 3. Regras que já existiam no código e não estavam no planejamento
 
 Registradas agora, para o documento refletir o que o sistema de fato faz:

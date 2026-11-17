@@ -14,7 +14,7 @@ from app.schemas import (
     DashboardOut,
     MaterialCreate, MaterialOut,
     ObraCreate, ObraOut,
-    AndamentoUpdate, PedidoCreate, RequisicaoCreate, RequisicaoOut,
+    AndamentoUpdate, AtivoUpdate, PedidoCreate, RequisicaoCreate, RequisicaoOut,
     ResumoOut, Unidade, UNIDADES_DESCRICAO,
 )
 from app.services import auditoria_service
@@ -69,8 +69,10 @@ async def criar_material(
 ):
     dados = payload.model_dump()
     dados["unidade"] = payload.unidade.value
-    if (await db.execute(select(Material).where(Material.nome == payload.nome))).first():
-        raise HTTPException(409, "Já existe um material com esse nome")
+    existente = (await db.execute(select(Material).where(Material.nome == payload.nome))).scalars().first()
+    if existente is not None:
+        raise HTTPException(409, "Já existe um material com esse nome, mas ele está desativado. Reative-o em vez de criar outro."
+                            if not existente.ativo else "Já existe um material com esse nome")
     material = Material(**dados)
     db.add(material)
     await db.flush()
@@ -93,9 +95,12 @@ async def criar_material(
 async def listar_materiais(
     busca: str | None = Query(default=None, max_length=100, description="texto no nome do material"),
     somente_criticos: bool = False,
-    db: AsyncSession = Depends(get_db), _: Usuario = Depends(get_current_user),
+    incluir_inativos: bool = Query(default=False, description="só o gestor: inclui os desativados"),
+    db: AsyncSession = Depends(get_db), usuario: Usuario = Depends(get_current_user),
 ):
     consulta = select(Material).order_by(Material.nome)
+    if not (incluir_inativos and usuario.perfil == Perfil.GESTOR):
+        consulta = consulta.where(Material.ativo)
     if busca:
         consulta = consulta.where(Material.nome.ilike(f"%{busca.strip()}%"))
     if somente_criticos:
@@ -116,6 +121,8 @@ async def editar_material(
     )).scalar_one_or_none()
     if material is None:
         raise HTTPException(404, "Material não encontrado")
+    if not material.ativo:
+        raise HTTPException(409, "Material desativado não pode ser editado. Reative-o primeiro.")
     duplicado = (await db.execute(
         select(Material.id).where(Material.nome == payload.nome, Material.id != material_id)
     )).first()
@@ -143,9 +150,9 @@ async def editar_material(
     return material
 
 
-async def _remover(db: AsyncSession, entidade, coluna_req, forcar: bool, usuario: Usuario, acao: str):
-    """Remove material/obra. Com histórico de requisições só remove com forcar=true;
-    requisições ainda na fila/processando sempre bloqueiam a remoção."""
+async def _desativar(db: AsyncSession, entidade, coluna_req, usuario: Usuario, acao: str):
+    """Exclusão lógica (achado 11): marca como inativo e mantém TUDO (requisições, movimentações, auditoria).
+    Requisições ainda na fila/processando bloqueiam a desativação (precisam terminar antes)."""
     abertas = (await db.execute(
         select(func.count()).select_from(Requisicao).where(
             coluna_req == entidade.id,
@@ -154,49 +161,60 @@ async def _remover(db: AsyncSession, entidade, coluna_req, forcar: bool, usuario
     )).scalar_one()
     if abertas:
         raise HTTPException(409, f"Há {abertas} requisição(ões) pendente(s)/em processamento. Aguarde o processamento.")
-    historico = (await db.execute(
-        select(func.count()).select_from(Requisicao).where(coluna_req == entidade.id)
-    )).scalar_one()
-    if historico and not forcar:
-        raise HTTPException(409, f"Há {historico} requisição(ões) no histórico vinculadas. Confirme para remover tudo junto.")
-    if isinstance(entidade, Material):
-        # o histórico de movimentações acompanha o material removido
-        await db.execute(delete(MovimentacaoEstoque).where(MovimentacaoEstoque.material_id == entidade.id))
-    elif historico:
-        # as saídas dos pedidos apagados ficam no livro-razão do material, só perdem o vínculo com a requisição
-        ids_req = select(Requisicao.id).where(coluna_req == entidade.id)
-        await db.execute(update(MovimentacaoEstoque)
-                         .where(MovimentacaoEstoque.requisicao_id.in_(ids_req)).values(requisicao_id=None))
-    if not isinstance(entidade, Material):
-        # devoluções feitas por esta obra ficam no livro-razão do material, só perdem o vínculo com a obra
-        await db.execute(update(MovimentacaoEstoque).where(MovimentacaoEstoque.obra_id == entidade.id).values(obra_id=None))
-    if historico:
-        await db.execute(delete(Requisicao).where(coluna_req == entidade.id))
-    detalhes = {"nome": entidade.nome, "requisicoes_removidas": historico}
-    entidade_nome, entidade_id = type(entidade).__name__.lower(), entidade.id
-    await db.delete(entidade)
-    auditoria_service.registrar(db, usuario.id, acao, entidade_nome, entidade_id, detalhes)
+    if not entidade.ativo:
+        return                                   # já desativado: idempotente
+    entidade.ativo = False
+    entidade.desativado_em = datetime.now(timezone.utc).replace(tzinfo=None)
+    auditoria_service.registrar(db, usuario.id, acao, type(entidade).__name__.lower(), entidade.id, {"nome": entidade.nome})
+    await db.commit()
+
+
+async def _reativar(db: AsyncSession, entidade, usuario: Usuario, acao: str):
+    if entidade.ativo:
+        return
+    entidade.ativo = True
+    entidade.desativado_em = None
+    auditoria_service.registrar(db, usuario.id, acao, type(entidade).__name__.lower(), entidade.id, {"nome": entidade.nome})
     await db.commit()
 
 
 @router.delete("/materiais/{material_id}", status_code=204)
-async def remover_material(
-    material_id: int, forcar: bool = False,
+async def desativar_material(
+    material_id: int,
     db: AsyncSession = Depends(get_db), usuario: Usuario = Depends(somente_gestor),
 ):
+    """Desativa o material (exclusão lógica): some das listagens e não aceita pedidos nem entradas; o histórico permanece."""
     material = await db.get(Material, material_id)
     if material is None:
         raise HTTPException(404, "Material não encontrado")
-    await _remover(db, material, Requisicao.material_id, forcar, usuario, "material_removido")
+    await _desativar(db, material, Requisicao.material_id, usuario, "material_desativado")
+
+
+@router.patch("/materiais/{material_id}", response_model=MaterialOut)
+async def alterar_situacao_material(
+    material_id: int, payload: AtivoUpdate,
+    db: AsyncSession = Depends(get_db), usuario: Usuario = Depends(somente_gestor),
+):
+    """Reativa (`{"ativo": true}`) um material desativado, em vez de recriá-lo. `{"ativo": false}` equivale ao DELETE."""
+    material = await db.get(Material, material_id)
+    if material is None:
+        raise HTTPException(404, "Material não encontrado")
+    if payload.ativo:
+        await _reativar(db, material, usuario, "material_reativado")
+    else:
+        await _desativar(db, material, Requisicao.material_id, usuario, "material_desativado")
+    await db.refresh(material)
+    return material
 
 
 # ---------- Obras ----------
 
 @router.delete("/obras/{obra_id}", status_code=204)
-async def remover_obra(
-    obra_id: int, forcar: bool = False,
+async def desativar_obra(
+    obra_id: int,
     db: AsyncSession = Depends(get_db), usuario: Usuario = Depends(somente_gestor),
 ):
+    """Desativa a obra (exclusão lógica): some das listagens e não aceita novos pedidos; o histórico permanece."""
     obra = await db.get(Obra, obra_id)
     if obra is None:
         raise HTTPException(404, "Obra não encontrada")
@@ -204,8 +222,25 @@ async def remover_obra(
         select(func.count()).select_from(Usuario).where(Usuario.obra_id == obra_id)
     )).scalar_one()
     if vinculados:
-        raise HTTPException(409, f"Há {vinculados} usuário(s) vinculados a esta obra. Desvincule-os antes de remover.")
-    await _remover(db, obra, Requisicao.obra_id, forcar, usuario, "obra_removida")
+        raise HTTPException(409, f"Há {vinculados} usuário(s) vinculados a esta obra. Desvincule-os antes de desativar.")
+    await _desativar(db, obra, Requisicao.obra_id, usuario, "obra_desativada")
+
+
+@router.patch("/obras/{obra_id}", response_model=ObraOut)
+async def alterar_situacao_obra(
+    obra_id: int, payload: AtivoUpdate,
+    db: AsyncSession = Depends(get_db), usuario: Usuario = Depends(somente_gestor),
+):
+    """Reativa (`{"ativo": true}`) uma obra desativada, em vez de recriá-la."""
+    obra = await db.get(Obra, obra_id)
+    if obra is None:
+        raise HTTPException(404, "Obra não encontrada")
+    if payload.ativo:
+        await _reativar(db, obra, usuario, "obra_reativada")
+    else:
+        await desativar_obra(obra_id, db, usuario)
+    await db.refresh(obra)
+    return obra
 
 
 @router.patch("/obras/{obra_id}/andamento", response_model=ObraOut)
@@ -255,10 +290,13 @@ async def criar_obra(payload: ObraCreate, db: AsyncSession = Depends(get_db), us
 async def listar_obras(
     busca: str | None = Query(default=None, max_length=100, description="texto no nome ou na cidade"),
     status: StatusObra | None = None,
+    incluir_inativos: bool = Query(default=False, description="só o gestor: inclui as desativadas"),
     db: AsyncSession = Depends(get_db), usuario: Usuario = Depends(get_current_user),
 ):
-    """Gestor/almoxarife veem todas; engenheiro vê apenas a própria obra."""
+    """Gestor/almoxarife veem todas as ativas; engenheiro vê apenas a própria obra."""
     consulta = select(Obra).order_by(Obra.id)
+    if not (incluir_inativos and usuario.perfil == Perfil.GESTOR):
+        consulta = consulta.where(Obra.ativo)
     if busca:
         like = f"%{busca.strip()}%"
         consulta = consulta.where(Obra.nome.ilike(like) | Obra.cidade.ilike(like))
@@ -286,9 +324,13 @@ async def criar_requisicao(
         raise HTTPException(404, "Obra não encontrada")
     if obra.status == StatusObra.FINALIZADA.value:
         raise HTTPException(409, "Obra finalizada não aceita novas requisições")
+    if not obra.ativo:
+        raise HTTPException(409, "Obra desativada não aceita novas requisições")
     material = await db.get(Material, payload.material_id)
     if material is None:
         raise HTTPException(404, "Material não encontrado")
+    if not material.ativo:
+        raise HTTPException(409, "Material desativado não aceita novos pedidos")
 
     requisicao = Requisicao(
         obra_id=payload.obra_id,
@@ -327,9 +369,14 @@ async def criar_pedido(
         raise HTTPException(404, "Obra não encontrada")
     if obra.status == StatusObra.FINALIZADA.value:
         raise HTTPException(409, "Obra finalizada não aceita novas requisições")
+    if not obra.ativo:
+        raise HTTPException(409, "Obra desativada não aceita novas requisições")
     for item in payload.itens:
-        if await db.get(Material, item.material_id) is None:
+        material = await db.get(Material, item.material_id)
+        if material is None:
             raise HTTPException(404, f"Material {item.material_id} não encontrado")
+        if not material.ativo:
+            raise HTTPException(409, f"O material {material.nome} está desativado e não aceita novos pedidos")
 
     pedido_id = str(uuid.uuid4())
     requisicoes = [
@@ -410,7 +457,7 @@ async def dashboard_resumo(db: AsyncSession = Depends(get_db), usuario: Usuario 
     eh_eng = usuario.perfil == Perfil.ENGENHEIRO
 
     q_status = select(Requisicao.status, func.count()).group_by(Requisicao.status)
-    q_obras = select(func.count()).select_from(Obra)
+    q_obras = select(func.count()).select_from(Obra).where(Obra.ativo)
     if eh_eng:
         q_status = q_status.where(Requisicao.obra_id == usuario.obra_id)
         q_obras = q_obras.where(Obra.id == usuario.obra_id)
@@ -418,7 +465,7 @@ async def dashboard_resumo(db: AsyncSession = Depends(get_db), usuario: Usuario 
     for status, n in (await db.execute(q_status)).all():
         por_status[status.value] = n
 
-    materiais = (await db.execute(select(Material).order_by(Material.nome))).scalars().all()
+    materiais = (await db.execute(select(Material).where(Material.ativo).order_by(Material.nome))).scalars().all()
     criticos = [m for m in materiais if m.quantidade_estoque <= m.estoque_critico]
     return DashboardOut(
         total_materiais=len(materiais),

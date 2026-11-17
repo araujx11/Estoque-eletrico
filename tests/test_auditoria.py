@@ -65,7 +65,7 @@ async def test_acoes_de_estoque_obra_e_requisicao_sao_registradas(client, contas
     assert entrada["entidade"] == "material" and entrada["entidade_id"] == str(mid)
 
 
-async def test_remocoes_e_edicoes_sao_registradas(client, contas, SessionTeste):
+async def test_desativacoes_e_edicoes_sao_registradas(client, contas, SessionTeste):
     h = contas["gestor"]
     mid = await criar_material(SessionTeste, "Descartável", estoque=1)
     oid = await criar_obra(SessionTeste, "Obra descartável")
@@ -75,7 +75,7 @@ async def test_remocoes_e_edicoes_sao_registradas(client, contas, SessionTeste):
     assert (await client.delete(f"/materiais/{mid}", headers=h)).status_code == 204
     assert (await client.delete(f"/obras/{oid}", headers=h)).status_code == 204
     acoes = {i["acao"] for i in (await _log(client, h))["itens"]}
-    assert {"material_editado", "obra_andamento", "material_removido", "obra_removida"} <= acoes
+    assert {"material_editado", "obra_andamento", "material_desativado", "obra_desativada"} <= acoes
 
 
 async def test_filtros_e_paginacao_da_auditoria(client, contas):

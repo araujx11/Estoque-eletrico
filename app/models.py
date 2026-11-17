@@ -81,6 +81,10 @@ class Material(Base):
     quantidade_estoque: Mapped[Decimal] = mapped_column(QTD, default=ZERO)
     estoque_critico: Mapped[Decimal] = mapped_column(QTD, default=ZERO)  # abaixo disso = alerta
 
+    # exclusão lógica (achado 11): desativar preserva histórico, requisições, movimentações e auditoria
+    ativo: Mapped[bool] = mapped_column(default=True, server_default=true())
+    desativado_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     requisicoes: Mapped[list["Requisicao"]] = relationship(back_populates="material")
 
 
@@ -99,6 +103,8 @@ class Obra(Base):
     progresso: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     descricao_andamento: Mapped[str | None] = mapped_column(Text, nullable=True)
     finalizada_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    ativo: Mapped[bool] = mapped_column(default=True, server_default=true())
+    desativado_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     requisicoes: Mapped[list["Requisicao"]] = relationship(back_populates="obra")
 

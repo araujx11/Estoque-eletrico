@@ -219,7 +219,7 @@ async def relatorio_estoque_critico(
     q = select(Material.nome.label("material"), Material.unidade.label("unidade"),
                Material.quantidade_estoque.label("estoque"), Material.estoque_critico.label("critico"),
                falta.label("falta_para_critico"), pct.label("percentual_do_critico"), situacao.label("situacao")
-               ).where(Material.quantidade_estoque <= Material.estoque_critico)
+               ).where(Material.ativo, Material.quantidade_estoque <= Material.estoque_critico)
     if busca:
         q = q.where(Material.nome.ilike(f"%{busca.strip()}%"))
     colunas = [ColunaOut(chave="material", titulo="Material"), ColunaOut(chave="unidade", titulo="Unidade"),
@@ -336,9 +336,9 @@ async def dashboard_completo(
     de = hoje - timedelta(days=int(periodo) - 1) if periodo != "todos" else None
     cont = lambda st: func.count().filter(Requisicao.status == st)  # noqa: E731
 
-    total_mat = (await db.execute(select(func.count()).select_from(Material))).scalar_one()
+    total_mat = (await db.execute(select(func.count()).select_from(Material).where(Material.ativo))).scalar_one()
     alerta = (await db.execute(select(func.count()).select_from(Material)
-                               .where(Material.quantidade_estoque <= Material.estoque_critico))).scalar_one()
+                               .where(Material.ativo, Material.quantidade_estoque <= Material.estoque_critico))).scalar_one()
     abertas = (await db.execute(_filtrar(select(func.count()).select_from(Requisicao)
                                          .where(Requisicao.status.in_(ABERTAS)), None, None, obra_id))).scalar_one()
 
@@ -380,7 +380,7 @@ async def dashboard_completo(
                for i, n, u, e, c, f in (await db.execute(
                    select(Material.id, Material.nome, Material.unidade, Material.quantidade_estoque,
                           Material.estoque_critico, falta)
-                   .where(Material.quantidade_estoque <= Material.estoque_critico)
+                   .where(Material.ativo, Material.quantidade_estoque <= Material.estoque_critico)
                    .order_by(Material.quantidade_estoque / func.nullif(Material.estoque_critico, 0), Material.nome)
                    .limit(10))).all()]
 
@@ -391,7 +391,7 @@ async def dashboard_completo(
                .where(Requisicao.status.in_(ABERTAS)).group_by(Requisicao.material_id).subquery())
         em_deficit = (await db.execute(select(func.count()).select_from(Material)
                                        .join(dem, dem.c.mid == Material.id)
-                                       .where(dem.c.d > Material.quantidade_estoque))).scalar_one()
+                                       .where(Material.ativo, dem.c.d > Material.quantidade_estoque))).scalar_one()
 
     return {
         "periodo": periodo, "de": de.isoformat() if de else None,

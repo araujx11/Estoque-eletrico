@@ -20,6 +20,7 @@ export async function montar(el, usuario) {
         </form></section>` : ''}
       <section style="grid-column:1/-1">
         <div class="linha" style="margin-bottom:10px"><h2 style="margin:0" class="grow">Estoque</h2>
+          ${podeRemover ? '<label class="chk"><input id="verInativos" type="checkbox"> Mostrar desativados</label>' : ''}
           <input id="busca" type="search" placeholder="Buscar por nome…" aria-label="Buscar material"></div>
         <div class="tw"><table id="tab"></table></div>
       </section>
@@ -34,17 +35,22 @@ export async function montar(el, usuario) {
       ? `<tr><th>Material</th><th>Estoque</th><th>Crítico</th><th>Nível</th><th></th></tr>` + itens.map(m => {
         const crit = m.quantidade_estoque <= m.estoque_critico;
         const max = Math.max(m.quantidade_estoque, m.estoque_critico * 3, 1);
-        return `<tr class="${crit ? 'critico' : ''}"><td>${esc(m.nome)}</td>
+        const off = m.ativo === false;
+        return `<tr class="${off ? 'inativo' : (crit ? 'critico' : '')}"><td>${esc(m.nome)}${off ? ' <span class="badge">desativado</span>' : ''}</td>
           <td>${fmt(m.quantidade_estoque)} ${esc(m.unidade)}</td><td>${fmt(m.estoque_critico)} ${esc(m.unidade)}</td>
           <td><div class="bar ${crit ? 'crit' : ''}" title="${crit ? 'Abaixo do crítico' : 'OK'}"><i style="width:${m.quantidade_estoque / max * 100}%"></i></div></td>
-          <td>${podeEditar ? `<button class="sm" data-editar="${m.id}">Editar</button>
+          <td>${podeEditar && !off ? `<button class="sm" data-editar="${m.id}">Editar</button>
                 <a class="btnlink" href="#/movimentacoes?entrada=${m.id}">+ Entrada</a>` : ''}
-              ${podeRemover ? `<button class="sm del" data-remover="${m.id}">Remover</button>` : ''}</td></tr>`;
+              ${podeRemover ? (off ? `<button class="sm" data-reativar="${m.id}">Reativar</button>`
+                                   : `<button class="sm del" data-remover="${m.id}">Desativar</button>`) : ''}</td></tr>`;
       }).join('')
       : '<tr><td class="empty">Nenhum material encontrado.</td></tr>';
   }
 
-  async function carregar() { lista = await api('/materiais'); renderTabela(); }
+  async function carregar() {
+    const inativos = podeRemover && $('#verInativos', el)?.checked;
+    lista = await api('/materiais' + (inativos ? '?incluir_inativos=true' : '')); renderTabela();
+  }
 
   function entrarEdicao(m) {
     editando = m;
@@ -68,6 +74,7 @@ export async function montar(el, usuario) {
   }
 
   $('#busca', el).addEventListener('input', renderTabela);
+  $('#verInativos', el)?.addEventListener('change', () => carregar().catch(e => toast(e.message, 'err')));
 
   if (podeEditar) {
     $('#cancelar', el).onclick = sairEdicao;
@@ -86,23 +93,20 @@ export async function montar(el, usuario) {
   }
 
   el.addEventListener('click', async e => {
-    const bEd = e.target.closest('[data-editar]'), bRm = e.target.closest('[data-remover]');
+    const bEd = e.target.closest('[data-editar]'), bRm = e.target.closest('[data-remover]'), bRe = e.target.closest('[data-reativar]');
     if (bEd) {
       entrarEdicao(lista.find(m => m.id === Number(bEd.dataset.editar)));
       scrollTo({top: 0, behavior: 'smooth'});
     }
     if (bRm) {
       const m = lista.find(x => x.id === Number(bRm.dataset.remover));
-      if (!await confirmar(`Remover "${m.nome}"?`, 'Remover')) return;
-      try {
-        try { await api(`/materiais/${m.id}`, {method: 'DELETE'}); }
-        catch (err) {
-          // com histórico, o backend pede confirmação para remover as requisições junto
-          if (err.status !== 409 || !/histórico/.test(err.message) || !await confirmar(err.message, 'Remover tudo')) throw err;
-          await api(`/materiais/${m.id}?forcar=true`, {method: 'DELETE'});
-        }
-        toast('Material removido', 'ok'); await carregar();
-      } catch (err) { toast(err.message, 'err'); }
+      if (!await confirmar(`Desativar "${m.nome}"? O histórico é mantido e você pode reativá-lo depois.`, 'Desativar')) return;
+      try { await api(`/materiais/${m.id}`, {method: 'DELETE'}); toast('Material desativado', 'ok'); await carregar(); }
+      catch (err) { toast(err.message, 'err'); }
+    }
+    if (bRe) {
+      try { await apiJson(`/materiais/${bRe.dataset.reativar}`, 'PATCH', {ativo: true}); toast('Material reativado', 'ok'); await carregar(); }
+      catch (err) { toast(err.message, 'err'); }
     }
   });
 

@@ -59,6 +59,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--bd);white-space:nowrap}
 th{color:var(--mut);font-weight:500;font-size:12px}
 tr.critico td{background:var(--errbg)}
+tr.inativo td{opacity:.55}
 .empty{color:var(--mut);padding:8px 0}
 .mut{color:var(--mut)}
 .badge{display:inline-block;padding:2px 9px;border-radius:99px;font-size:12px;font-weight:600}

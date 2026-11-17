@@ -211,6 +211,7 @@ python -m alembic upgrade head             # aplica o que falta
 | `0003` | colunas da fila com vários processos e do reprocessamento de erros (`reivindicada_*`, `tentativas`, `ultimo_erro`, `proxima_tentativa_em`) |
 | `0004` | preenche o responsável (`usuario_id`) das saídas já existentes a partir do solicitante da requisição (RF16) |
 | `0005` | `obra_id` nas movimentações, usado pelas devoluções (RF15) |
+| `0006` | `ativo` e `desativado_em` em materiais e obras (exclusão lógica, achado 11) |
 
 **Banco de desenvolvimento já existente** (criado antes do Alembic): **pare a API** (o `ALTER` reescreve as tabelas e trava as linhas), faça um backup
 (`docker exec estoque_postgres pg_dump -U estoque_user estoque_db > backup.sql`) e rode `python -m alembic upgrade head`. Banco novo: basta subir a API; o `init_models()`

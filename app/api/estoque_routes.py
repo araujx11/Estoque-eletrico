@@ -91,6 +91,8 @@ async def registrar_entrada(
 ):
     """Recebimento/compra: soma ao estoque e registra a movimentação (mesma transação)."""
     material = await _material_travado(db, payload.material_id)
+    if not material.ativo:
+        raise HTTPException(409, "Material desativado não aceita novas entradas. Reative-o primeiro.")
     material.quantidade_estoque += payload.quantidade
     db.add(MovimentacaoEstoque(
         material_id=material.id, tipo=TipoMovimentacao.ENTRADA, quantidade=payload.quantidade,

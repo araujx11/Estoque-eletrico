@@ -198,21 +198,20 @@ async def test_listagem_com_filtros_e_paginacao(client, contas):
 
 # ---------------------------------------------------------------- remoção mantém o livro-razão coerente
 
-async def test_remover_material_apaga_suas_movimentacoes(client, contas, SessionTeste):
+async def test_desativar_material_preserva_suas_movimentacoes(client, contas, SessionTeste):
     mid = contas["material"]["id"]
+    antes = len(await movimentacoes_de(SessionTeste, mid))
+    assert antes >= 1                                                    # o estoque inicial do cadastro
     assert (await client.delete(f"/materiais/{mid}", headers=contas["gestor"])).status_code == 204
-    async with SessionTeste() as db:
-        assert (await db.execute(select(func.count()).select_from(MovimentacaoEstoque)
-                                 .where(MovimentacaoEstoque.material_id == mid))).scalar_one() == 0
+    assert len(await movimentacoes_de(SessionTeste, mid)) == antes       # exclusão lógica: o livro-razão fica
 
 
-async def test_remover_obra_com_historico_preserva_as_saidas(client, contas, SessionTeste):
+async def test_desativar_obra_com_historico_preserva_as_saidas_e_o_vinculo(client, contas, SessionTeste):
     mid = await criar_material(SessionTeste, estoque=50)
     oid = await criar_obra(SessionTeste, "Obra descartável")
     (rid,) = await criar_requisicoes(SessionTeste, oid, mid, [10])
     assert (await processar(SessionTeste, rid)).status == S.APROVADA
 
-    assert (await client.delete(f"/obras/{oid}", headers=contas["gestor"])).status_code == 409   # pede confirmação
-    assert (await client.delete(f"/obras/{oid}?forcar=true", headers=contas["gestor"])).status_code == 204
+    assert (await client.delete(f"/obras/{oid}", headers=contas["gestor"])).status_code == 204   # sem pedir confirmação
     movs = await movimentacoes_de(SessionTeste, mid)
-    assert len(movs) == 1 and movs[0].tipo == T.SAIDA and movs[0].requisicao_id is None   # saída fica, sem o vínculo
+    assert len(movs) == 1 and movs[0].tipo == T.SAIDA and movs[0].requisicao_id == rid           # saída e vínculo permanecem

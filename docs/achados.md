@@ -23,7 +23,7 @@ O achado 2 ficou **mitigado** pela correção do 1. Os demais continuam sem corr
 | 8 | ✅ **CORRIGIDO.** Quantidades de estoque eram `Float`: somas longas acumulavam erro de arredondamento (0,1 somado 10 mil vezes dava 1000,0000000001588) | Média | `tests/test_decimal.py` |
 | 9 | “Por dia” nos relatórios e no dashboard agrupa por dia **UTC**; em Recife (UTC−3) pedidos feitos à noite caem no dia seguinte | Baixa | análise |
 | 10 | `PUT /materiais/{id}` ainda aceita mudar `quantidade_estoque` (vira `AJUSTE` com motivo genérico), contornando o “motivo obrigatório” | Baixa | `test_edicao_de_quantidade_vira_ajuste` |
-| 11 | Remover material apaga o histórico de movimentações dele; remover obra com histórico apaga as requisições (as saídas ficam, sem vínculo) | Média | `test_remover_*` |
+| 11 | ✅ **CORRIGIDO.** Remover material apagava o histórico de movimentações dele; remover obra com histórico apagava as requisições (as saídas ficavam, sem vínculo) | Média | `tests/test_exclusao_logica.py` |
 | 12 | Falhas de login são auditadas **sem autenticação**: quem insistir gera linhas sem limite (crescimento de tabela / ruído), e não há *rate limit* | Média | análise (`/auth/login`) |
 | 15 | ✅ **CORRIGIDO na Sprint 05.** Mensagens de validação (422) em inglês e a resposta **ecoava o valor enviado** (inclusive senhas) | Média | `tests/test_mensagens_erro.py`; conferido na API antes e depois |
 | 16 | ✅ **CORRIGIDO junto com o 3.** `_marcar_erro` gravava `ERRO` em qualquer requisição, inclusive numa que **já tinha sido aprovada** (falha de conexão *depois* do commit, no `refresh`). Com o reprocessamento automático isso viraria **débito em dobro** | **Alta** (só passou a importar com o achado 3) | `test_falha_depois_do_commit_nao_vira_erro_nem_debita_de_novo` (falha sem a proteção) |
@@ -215,6 +215,16 @@ Os timestamps são UTC naive, e os agrupamentos “por dia/semana” também. Pa
 no dia seguinte. **Correção proposta:** agrupar em SQL por
 `date_trunc('day', criado_em AT TIME ZONE 'UTC' AT TIME ZONE 'America/Recife')`.
 *(Durante esta etapa um teste pegou um bug do próprio dashboard, que misturava `date.today()` local com datas UTC; já corrigido.)*
+
+## 11 (corrigido). Exclusão lógica de materiais e obras
+`DELETE /materiais/{id}` e `DELETE /obras/{id}` **desativam** (`ativo = false`, `desativado_em`) e não apagam mais nada: requisições, movimentações, devoluções e auditoria permanecem.
+Listagens padrão (materiais, obras, dashboard, diagnóstico, relatório de estoque crítico) mostram só os ativos; o **gestor** vê todos com `?incluir_inativos=true` (para os demais perfis o parâmetro é ignorado).
+Material ou obra desativado **não aceita novos pedidos**, material desativado não aceita **entradas** nem edição, obra desativada não recebe novos usuários, e nada deles entra na fila. A desativação continua
+**bloqueada** (409) enquanto houver requisição pendente/em processamento, e a obra com usuários vinculados. O nome do material continua único (inclusive entre desativados): criar com nome de um desativado devolve 409
+mandando **reativar**, e `PATCH /materiais/{id}` / `PATCH /obras/{id}` com `{"ativo": true}` reativa com o saldo e o histórico intactos. Só o gestor desativa e reativa. O parâmetro `forcar` deixou de existir.
+**Fica de fora de propósito:** ajustes e devoluções de material desativado continuam permitidos (para corrigir inventário), e o relatório de **consumo** mantém o histórico de itens desativados.
+**Limitação:** entre a checagem de "sem pedidos abertos" e o `UPDATE` um pedido novo poderia entrar (sem lock); o filtro da fila impede que ele seja processado, mas ele ficaria pendente. Janela pequena, só com gestor desativando enquanto alguém pede.
+Migração `0006`. Os testes que descreviam a remoção física (`test_remover_*`, `test_remocoes_...`) foram reescritos para a nova regra.
 
 ## 10–12. Pequenas fragilidades da etapa de relatórios
 * **#10** Remover `quantidade_estoque` do `PUT /materiais` e obrigar Entrada/Ajuste (a tela já faz isso; só a API ficou compatível).

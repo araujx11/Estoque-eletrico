@@ -79,7 +79,7 @@ async def diagnosticar(
     await db.rollback()
     await db.connection(execution_options={"isolation_level": "REPEATABLE READ"})
 
-    consulta_mat = select(Material).order_by(Material.nome)
+    consulta_mat = select(Material).where(Material.ativo).order_by(Material.nome)
     if material_id is not None:
         consulta_mat = consulta_mat.where(Material.id == material_id)
     materiais = (await db.execute(consulta_mat)).scalars().all()
@@ -105,8 +105,8 @@ async def diagnosticar(
 
     if hipoteticas:
         obras = {o.id: o for o in (await db.execute(
-            select(Obra).where(Obra.id.in_({h.obra_id for h in hipoteticas})))).scalars().all()}
-        existentes = {i for (i,) in (await db.execute(select(Material.id))).all()}
+            select(Obra).where(Obra.ativo, Obra.id.in_({h.obra_id for h in hipoteticas})))).scalars().all()}
+        existentes = {i for (i,) in (await db.execute(select(Material.id).where(Material.ativo))).all()}
         agora = datetime.now(timezone.utc).replace(tzinfo=None)
         for i, h in enumerate(hipoteticas):
             if h.obra_id not in obras:

@@ -20,6 +20,7 @@ export async function montar(el, usuario) {
       </form></section>` : ''}
     <section><h2>Obras cadastradas</h2>
       <div class="filtros"><label>Buscar<input id="busca" type="search" placeholder="nome ou cidade"></label>
+        ${gestor ? '<label class="chk"><input id="verInativas" type="checkbox"> Mostrar desativadas</label>' : ''}
         <label>Status<select id="fStatus"><option value="">Todos</option><option value="em_andamento">Em andamento</option><option value="finalizada">Finalizadas</option></select></label></div>
       <div class="tw"><table id="tab"></table></div></section>
     <dialog id="dlg">
@@ -37,20 +38,25 @@ export async function montar(el, usuario) {
     const vis = lista.filter(o => (!st || o.status === st) && (o.nome + ' ' + o.cidade).toLowerCase().includes(termo));
     $('#tab', el).innerHTML = vis.length
       ? `<tr><th>Obra</th><th>Cidade</th><th>Status</th><th>Andamento</th><th>Prio.</th><th>Prazo</th><th>Parada</th><th></th></tr>` + vis.map(o => `
-        <tr><td>${esc(o.nome)}</td><td>${esc(o.cidade)}</td>
+        <tr class="${o.ativo === false ? 'inativo' : ''}"><td>${esc(o.nome)}${o.ativo === false ? ' <span class="badge">desativada</span>' : ''}</td><td>${esc(o.cidade)}</td>
         <td><span class="badge s-${o.status}">${o.status === 'finalizada' ? 'Finalizada' : 'Em andamento'}</span>
           ${o.finalizada_em ? `<div class="desc">${dataHora(o.finalizada_em)}</div>` : ''}</td>
         <td><div class="bar" title="${o.progresso}%"><i style="width:${o.progresso}%"></i></div>${o.progresso}%
           ${o.descricao_andamento ? `<div class="desc">${esc(o.descricao_andamento)}</div>` : ''}</td>
         <td>${o.nivel_prioridade}</td><td>${dataHora(o.prazo_entrega)}</td>
         <td>${o.parada_por_falta_material ? '⚠️ sim' : 'não'}</td>
-        <td>${gestor ? `<button class="sm" data-and="${o.id}">Andamento</button>
-          <button class="sm del" data-rm="${o.id}">Remover</button>` : ''}</td></tr>`).join('')
+        <td>${gestor ? (o.ativo === false ? `<button class="sm" data-reativar="${o.id}">Reativar</button>`
+          : `<button class="sm" data-and="${o.id}">Andamento</button>
+          <button class="sm del" data-rm="${o.id}">Desativar</button>`) : ''}</td></tr>`).join('')
       : '<tr><td class="empty">Nenhuma obra cadastrada.</td></tr>';
   }
-  async function carregar() { lista = await api('/obras'); renderTabela(); }
+  async function carregar() {
+    const inativas = gestor && $('#verInativas', el)?.checked;
+    lista = await api('/obras' + (inativas ? '?incluir_inativos=true' : '')); renderTabela();
+  }
   $('#busca', el).addEventListener('input', renderTabela);
   $('#fStatus', el).addEventListener('change', renderTabela);
+  $('#verInativas', el)?.addEventListener('change', () => carregar().catch(e => toast(e.message, 'err')));
 
   if (gestor) {
     $('#fObra', el).addEventListener('submit', async e => {
@@ -84,7 +90,7 @@ export async function montar(el, usuario) {
     });
 
     el.addEventListener('click', async e => {
-      const bAnd = e.target.closest('[data-and]'), bRm = e.target.closest('[data-rm]');
+      const bAnd = e.target.closest('[data-and]'), bRm = e.target.closest('[data-rm]'), bRe = e.target.closest('[data-reativar]');
       if (bAnd) {
         const o = lista.find(x => x.id === Number(bAnd.dataset.and));
         obraAnd = o.id;
@@ -97,15 +103,13 @@ export async function montar(el, usuario) {
       }
       if (bRm) {
         const o = lista.find(x => x.id === Number(bRm.dataset.rm));
-        if (!await confirmar(`Remover a obra "${o.nome}"?`, 'Remover')) return;
-        try {
-          try { await api(`/obras/${o.id}`, {method: 'DELETE'}); }
-          catch (err) {
-            if (err.status !== 409 || !/histórico/.test(err.message) || !await confirmar(err.message, 'Remover tudo')) throw err;
-            await api(`/obras/${o.id}?forcar=true`, {method: 'DELETE'});
-          }
-          toast('Obra removida', 'ok'); await carregar();
-        } catch (err) { toast(err.message, 'err'); }
+        if (!await confirmar(`Desativar a obra "${o.nome}"? O histórico é mantido e você pode reativá-la depois.`, 'Desativar')) return;
+        try { await api(`/obras/${o.id}`, {method: 'DELETE'}); toast('Obra desativada', 'ok'); await carregar(); }
+        catch (err) { toast(err.message, 'err'); }
+      }
+      if (bRe) {
+        try { await apiJson(`/obras/${bRe.dataset.reativar}`, 'PATCH', {ativo: true}); toast('Obra reativada', 'ok'); await carregar(); }
+        catch (err) { toast(err.message, 'err'); }
       }
     });
   }

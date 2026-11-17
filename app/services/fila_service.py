@@ -49,7 +49,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import and_, or_, select, update
 
 from app.core.database import AsyncSessionLocal
-from app.models import Obra, Requisicao, StatusRequisicao
+from app.models import Material, Obra, Requisicao, StatusRequisicao
 from app.services import auditoria_service
 from app.services.estoque_service import RESOLVIDAS, processar_requisicao
 from app.services.prioridade import chave_prioridade
@@ -263,7 +263,10 @@ async def reivindicar_e_enfileirar(
             Requisicao.tentativas < max_tentativas(),
             or_(Requisicao.proxima_tentativa_em.is_(None), Requisicao.proxima_tentativa_em <= agora),
         ))
-    alvo = select(Requisicao.id).where(or_(*candidatas)).with_for_update(skip_locked=True)
+    # material/obra desativados não entram na fila (a desativação já exige que não haja requisição aberta)
+    ativos = and_(Requisicao.material_id.in_(select(Material.id).where(Material.ativo)),
+                  Requisicao.obra_id.in_(select(Obra.id).where(Obra.ativo)))
+    alvo = select(Requisicao.id).where(or_(*candidatas), ativos).with_for_update(skip_locked=True)
     async with sessao() as db, db.begin():
         reivindicadas = (await db.execute(
             update(Requisicao).where(Requisicao.id.in_(alvo))

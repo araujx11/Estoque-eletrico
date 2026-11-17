@@ -52,7 +52,10 @@ async def _validar_obra(db: AsyncSession, perfil: Perfil, obra_id: int | None) -
         return None
     if obra_id is None:
         raise HTTPException(422, "Engenheiro precisa estar vinculado a uma obra")
-    if await db.get(Obra, obra_id) is None:
+    obra_vinculo = await db.get(Obra, obra_id)
+    if obra_vinculo is not None and not obra_vinculo.ativo:
+        raise HTTPException(409, "Obra desativada: não é possível vincular usuários a ela")
+    if obra_vinculo is None:
         raise HTTPException(404, "Obra não encontrada")
     return obra_id
 

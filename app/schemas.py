@@ -55,6 +55,8 @@ class MaterialOut(BaseModel):
     unidade: str
     quantidade_estoque: Qtd
     estoque_critico: Qtd
+    ativo: bool = True
+    desativado_em: datetime | None = None
 
 
 class ObraCreate(BaseModel):
@@ -85,6 +87,13 @@ class ObraOut(BaseModel):
     progresso: int
     descricao_andamento: str | None
     finalizada_em: datetime | None
+    ativo: bool = True
+    desativado_em: datetime | None = None
+
+
+class AtivoUpdate(BaseModel):
+    """Reativa (ou desativa) um material/obra, preservando todo o histórico."""
+    ativo: bool
 
 
 class AndamentoUpdate(BaseModel):
